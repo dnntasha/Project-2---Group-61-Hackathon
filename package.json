@@ -1,12 +1,10 @@
 {
   "name": "group-61-rw343-project-2",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
   "type": "commonjs",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "install:all": "npm install && npm install --prefix server && npm install --prefix client",
+    "install:all": "npm install --no-fund --no-audit && npm install --prefix server --no-fund --no-audit && npm install --prefix client --no-fund --no-audit",
     "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
     "dev:server": "npm run dev --prefix server",
     "dev:client": "npm run dev --prefix client",
@@ -15,11 +13,11 @@
     "prepare": "husky"
   },
   "lint-staged": {
-    "client/**/*.{js,jsx}": [
+    "client/src/**/*.{js,jsx}": [
       "prettier --write",
       "eslint --fix --quiet --config client/eslint.config.js"
     ],
-    "server/**/*.js": [
+    "server/**/*.{js,mjs}": [
       "prettier --write",
       "eslint --fix --quiet --config server/eslint.config.js"
     ],
@@ -31,13 +29,10 @@
     "type": "git",
     "url": "git@git.cs.sun.ac.za:Computer-Science/rw334/2026/projects/project-2/group-61-rw343-project-2.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
+    "@eslint/js": "^9.20.0",
     "concurrently": "^10.0.5",
-    "eslint": "^10.11.0",
+    "eslint": "^9.20.0",
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",
     "prettier": "3.9.9"
