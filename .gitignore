@@ -1,0 +1,6 @@
+node-modules/
+.env
+*.log
+TODO.md
+build/
+dist/
