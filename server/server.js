@@ -26,7 +26,12 @@ wss.on('connection', (ws) => {
   console.log('Client connected');
 
   // Send a welcome message to the newly connected client
-  ws.send(JSON.stringify({ type: 'WELCOME', message: 'Connected to WebSocket server!' }));
+  ws.send(
+    JSON.stringify({
+      type: 'WELCOME',
+      message: 'Connected to WebSocket server!',
+    })
+  );
 
   // Listen for messages from client
   ws.on('message', (message) => {
