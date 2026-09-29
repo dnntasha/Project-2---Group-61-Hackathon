@@ -1,0 +1,24 @@
+{
+  "name": "group-61-rw343-project-2",
+  "version": "1.0.0",
+  "description": "`Server dependencies`",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "install:all": "npm install && npm install --prefix server && npm install --prefix client",
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "dev:server": "npm run dev --prefix server",
+    "dev:client": "npm run dev --prefix client"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@git.cs.sun.ac.za:Computer-Science/rw334/2026/projects/project-2/group-61-rw343-project-2.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}
