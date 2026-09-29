@@ -1,23 +1,40 @@
 {
-  "name": "server",
+  "name": "group-61-rw343-project-2",
   "version": "1.0.0",
-  "type": "module",
-  "description": "",
-  "main": "server.js",
+  "type": "commonjs",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "install:all": "npm install && npm install --prefix server && npm install --prefix client",
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "dev:server": "npm run dev --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "cors": "^2.8.6",
-    "express": "^5.2.1",
-    "ws": "^8.22.0"
+  "lint-staged": {
+    "client/src/**/*.{js,jsx}": [
+      "prettier --write",
+      "eslint --fix --config client/eslint.config.js"
+    ],
+    "server/**/*.{js,mjs}": [
+      "prettier --write",
+      "eslint --fix --config server/eslint.config.js"
+    ],
+    "*.{json,md,yml,css}": [
+      "prettier --write"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@git.cs.sun.ac.za:Computer-Science/rw334/2026/projects/project-2/group-61-rw343-project-2.git"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "@eslint/js": "^10.0.1",
+    "concurrently": "^10.0.5",
+    "eslint": "^10.11.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
+    "prettier": "3.9.9"
   }
 }

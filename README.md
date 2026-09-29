@@ -24,3 +24,4 @@ Frontend: `http://localhost:3000/`
 
 - Gemini was used for assistance in the debugging process during project creation
 - Generative AI was used to help initialise the project (installing relevant packages and helping initilise project correctly)
+- Generative AI used to help set-up ESLint, Husky and Prettier for ensuring code functionality, quality and formatting

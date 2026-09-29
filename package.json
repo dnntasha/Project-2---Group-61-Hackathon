@@ -1,8 +1,9 @@
 {
   "name": "group-61-rw343-project-2",
   "version": "1.0.0",
-  "description": "`Server dependencies`",
+  "description": "",
   "main": "index.js",
+  "type": "commonjs",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "install:all": "npm install && npm install --prefix server && npm install --prefix client",
@@ -10,7 +11,21 @@
     "dev:server": "npm run dev --prefix server",
     "dev:client": "npm run dev --prefix client",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "client/**/*.{js,jsx}": [
+      "prettier --write",
+      "eslint --fix --quiet --config client/eslint.config.js"
+    ],
+    "server/**/*.js": [
+      "prettier --write",
+      "eslint --fix --quiet --config server/eslint.config.js"
+    ],
+    "*.{json,md,yml,css}": [
+      "prettier --write"
+    ]
   },
   "repository": {
     "type": "git",
@@ -19,9 +34,12 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "concurrently": "^10.0.5",
+    "eslint": "^10.11.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
     "prettier": "3.9.9"
   }
 }
