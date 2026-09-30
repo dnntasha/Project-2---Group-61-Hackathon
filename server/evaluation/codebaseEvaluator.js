@@ -137,6 +137,88 @@ export async function evaluateTestCase(temporaryDirectory, testCase) {
   };
 }
 
+export function formatTestResult(testCase, result) {
+  const formattedResult = {
+    passed: result.passed,
+    hidden: testCase.hidden ?? false,
+    runtimeMs: result.runtimeMs,
+    reason: result.reason,
+  };
+
+  if (result.passed) {
+    return formattedResult;
+  }
+
+  if (testCase.hidden) {
+    return formattedResult;
+  }
+
+  formattedResult.input = testCase.input ?? '';
+
+  if (result.reason === 'Incorrect output.') {
+    formattedResult.expectedOutput = testCase.expectedOutput ?? '';
+    formattedResult.actualOutput = result.stdout;
+  }
+
+  return formattedResult;
+}
+
+export async function evaluateCodebase(codebase, testCases = []) {
+  let temporaryDirectory;
+
+  try {
+    temporaryDirectory = await createTemporaryCodebase(codebase);
+
+    const entryPoint = await validatePythonEntryPoint(temporaryDirectory);
+
+    if (!entryPoint.valid) {
+      return {
+        passed: false,
+        reason: entryPoint.reason,
+        passedTests: 0,
+        totalTests: testCases.length,
+        passPercentage: 0,
+        totalPassedRuntimeMs: 0,
+        results: [],
+      };
+    }
+
+    const results = [];
+
+    for (const testCase of testCases) {
+      const result = await evaluateTestCase(temporaryDirectory, testCase);
+
+      results.push(formatTestResult(testCase, result));
+    }
+
+    const passedTests = results.filter((result) => result.passed).length;
+
+    const passPercentage =
+      testCases.length === 0 ? 0 : (passedTests / testCases.length) * 100;
+
+    const totalPassedRuntimeMs = results
+      .filter((result) => result.passed)
+      .reduce((total, result) => total + result.runtimeMs, 0);
+
+    return {
+      passed: passedTests === testCases.length,
+      reason:
+        passedTests === testCases.length
+          ? null
+          : 'One or more test cases failed.',
+      passedTests,
+      totalTests: testCases.length,
+      passPercentage,
+      totalPassedRuntimeMs,
+      results,
+    };
+  } finally {
+    if (temporaryDirectory) {
+      await removeTemporaryCodebase(temporaryDirectory);
+    }
+  }
+}
+
 export async function removeTemporaryCodebase(temporaryDirectory) {
   await rm(temporaryDirectory, {
     recursive: true,
