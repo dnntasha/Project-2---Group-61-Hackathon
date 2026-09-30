@@ -8,6 +8,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { executePythonFile } from '../execution/pythonExecutor.js';
 
 function validateNodeName(name) {
   if (
@@ -93,6 +94,46 @@ export async function validatePythonEntryPoint(temporaryDirectory) {
   return {
     valid: true,
     reason: null,
+  };
+}
+
+export async function evaluateTestCase(temporaryDirectory, testCase) {
+  const {
+    input = '',
+    expectedOutput = '',
+    timeLimit = 5000,
+    hidden = false,
+  } = testCase;
+
+  const execution = await executePythonFile(
+    'main.py',
+    input,
+    timeLimit,
+    temporaryDirectory
+  );
+
+  const actualOutput = execution.stdout.trimEnd();
+  const expected = expectedOutput.trimEnd();
+
+  let reason = null;
+
+  if (execution.timedOut) {
+    reason = 'Time limit exceeded.';
+  } else if (execution.exitCode !== 0) {
+    reason = 'Runtime error.';
+  } else if (actualOutput !== expected) {
+    reason = 'Incorrect output.';
+  }
+
+  return {
+    passed: reason === null,
+    hidden,
+    stdout: execution.stdout,
+    stderr: execution.stderr,
+    exitCode: execution.exitCode,
+    timedOut: execution.timedOut,
+    runtimeMs: execution.runtimeMs,
+    reason,
   };
 }
 
