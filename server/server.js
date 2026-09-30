@@ -2,6 +2,7 @@ import express from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import cors from 'cors';
+import { executePython } from './execution/pythonExecutor.js';
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -13,6 +14,27 @@ app.use(express.json());
 // Express HTTP REST routes
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Server is running' });
+});
+
+app.post('/api/execute', async (req, res) => {
+  const { code } = req.body;
+
+  if (typeof code !== 'string') {
+    return res.status(400).json({
+      error: 'Python code must be provided as a string.',
+    });
+  }
+
+  try {
+    const result = await executePython(code);
+    return res.json(result);
+  } catch (error) {
+    console.error('Python execution failed:', error);
+
+    return res.status(500).json({
+      error: 'Failed to execute Python code.',
+    });
+  }
 });
 
 // Create HTTP server from Express app
