@@ -65,3 +65,69 @@ export function executePython(
     pythonProcess.stdin.end();
   });
 }
+
+export function executePythonFile(
+  filePath,
+  stdin = '',
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  cwd
+) {
+  return new Promise((resolve, reject) => {
+    const startTime = performance.now();
+
+    const pythonProcess = spawn('python3', [filePath], {
+      cwd,
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let settled = false;
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      pythonProcess.kill('SIGKILL');
+    }, timeoutMs);
+
+    pythonProcess.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    pythonProcess.on('error', (error) => {
+      clearTimeout(timeout);
+
+      if (!settled) {
+        settled = true;
+        reject(error);
+      }
+    });
+
+    pythonProcess.on('close', (exitCode) => {
+      clearTimeout(timeout);
+
+      const runtimeMs = performance.now() - startTime;
+
+      if (!settled) {
+        settled = true;
+
+        resolve({
+          stdout,
+          stderr,
+          exitCode,
+          timedOut,
+          runtimeMs,
+        });
+      }
+    });
+
+    if (stdin) {
+      pythonProcess.stdin.write(stdin);
+    }
+
+    pythonProcess.stdin.end();
+  });
+}
