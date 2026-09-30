@@ -1,0 +1,7 @@
+node_modules/
+.env
+*.log
+TODO.md
+build/
+dist/
+devNotes.md
