@@ -6,6 +6,10 @@ import {
   createFileNode,
   deleteNode,
   renameNode,
+  getDirectories,
+  isDescendant,
+  moveNode,
+  findNode,
 } from './fileTreeUtils.js';
 import './FileTree.css';
 
@@ -63,6 +67,51 @@ function FileTree() {
     setTree((currentTree) => deleteNode(currentTree, nodeId));
   }
 
+  function handleMove(nodeId) {
+    const nodeToMove = findNode(tree, nodeId);
+
+    if (!nodeToMove) {
+      return;
+    }
+
+    const destinations = getDirectories(tree).filter(
+      (directory) =>
+        directory.id !== nodeId && !isDescendant(nodeToMove, directory.id)
+    );
+
+    if (destinations.length === 0) {
+      window.alert('There are no valid destination folders.');
+      return;
+    }
+
+    const destinationList = destinations
+      .map((directory, index) => `${index + 1}. ${directory.name}`)
+      .join('\n');
+
+    const selection = window.prompt(
+      `Move "${nodeToMove.name}" to:\n\n${destinationList}\n\nEnter destination number:`
+    );
+
+    if (selection === null) {
+      return;
+    }
+
+    const destinationIndex = Number(selection) - 1;
+
+    if (
+      !Number.isInteger(destinationIndex) ||
+      destinationIndex < 0 ||
+      destinationIndex >= destinations.length
+    ) {
+      window.alert('Invalid destination.');
+      return;
+    }
+
+    setTree((currentTree) =>
+      moveNode(currentTree, nodeId, destinations[destinationIndex].id)
+    );
+  }
+
   return (
     <aside className="file-tree">
       <h2>Files</h2>
@@ -73,6 +122,7 @@ function FileTree() {
         onCreateDirectory={handleCreateDirectory}
         onRename={handleRename}
         onDelete={handleDelete}
+        onMove={handleMove}
       />
     </aside>
   );

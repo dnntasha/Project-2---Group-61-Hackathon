@@ -6,6 +6,7 @@ function FileTreeNode({
   onCreateDirectory,
   onRename,
   onDelete,
+  onMove,
 }) {
   const [isOpen, setIsOpen] = useState(true);
 
@@ -32,6 +33,12 @@ function FileTreeNode({
         <button type="button" onClick={() => onRename(node.id, node.name)}>
           Rename
         </button>
+
+        {node.id !== 'root' && (
+          <button type="button" onClick={() => onMove(node.id)}>
+            Move
+          </button>
+        )}
 
         {node.id !== 'root' && (
           <button type="button" onClick={() => onDelete(node.id, node.name)}>
@@ -62,6 +69,7 @@ function FileTreeNode({
               onCreateDirectory={onCreateDirectory}
               onRename={onRename}
               onDelete={onDelete}
+              onMove={onMove}
             />
           ))}
         </div>
