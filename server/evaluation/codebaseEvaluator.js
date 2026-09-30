@@ -1,4 +1,11 @@
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import {
+  access,
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -58,6 +65,35 @@ export async function createTemporaryCodebase(codebase) {
 
     throw error;
   }
+}
+
+export async function validatePythonEntryPoint(temporaryDirectory) {
+  const mainPath = path.join(temporaryDirectory, 'main.py');
+
+  try {
+    await access(mainPath);
+  } catch {
+    return {
+      valid: false,
+      reason: 'main.py is missing.',
+    };
+  }
+
+  const mainContent = await readFile(mainPath, 'utf8');
+
+  const mainFunctionPattern = /^\s*def\s+main\s*\(/m;
+
+  if (!mainFunctionPattern.test(mainContent)) {
+    return {
+      valid: false,
+      reason: 'main.py must define a main() function.',
+    };
+  }
+
+  return {
+    valid: true,
+    reason: null,
+  };
 }
 
 export async function removeTemporaryCodebase(temporaryDirectory) {
