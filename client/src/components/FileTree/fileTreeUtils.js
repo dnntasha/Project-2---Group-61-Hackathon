@@ -33,3 +33,23 @@ export function addNode(tree, parentId, newNode) {
 
   return tree;
 }
+
+export function renameNode(tree, nodeId, newName) {
+  if (tree.id === nodeId) {
+    return {
+      ...tree,
+      name: newName,
+    };
+  }
+
+  if (tree.type === 'directory') {
+    return {
+      ...tree,
+      children: tree.children.map((child) =>
+        renameNode(child, nodeId, newName)
+      ),
+    };
+  }
+
+  return tree;
+}

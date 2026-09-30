@@ -4,6 +4,7 @@ import {
   addNode,
   createDirectoryNode,
   createFileNode,
+  renameNode,
 } from './fileTreeUtils.js';
 import './FileTree.css';
 
@@ -39,6 +40,16 @@ function FileTree() {
     setTree((currentTree) => addNode(currentTree, parentId, newDirectory));
   }
 
+  function handleRename(nodeId, currentName) {
+    const newName = window.prompt('Enter new name:', currentName);
+
+    if (!newName || !newName.trim()) {
+      return;
+    }
+
+    setTree((currentTree) => renameNode(currentTree, nodeId, newName.trim()));
+  }
+
   return (
     <aside className="file-tree">
       <h2>Files</h2>
@@ -47,6 +58,7 @@ function FileTree() {
         node={tree}
         onCreateFile={handleCreateFile}
         onCreateDirectory={handleCreateDirectory}
+        onRename={handleRename}
       />
     </aside>
   );

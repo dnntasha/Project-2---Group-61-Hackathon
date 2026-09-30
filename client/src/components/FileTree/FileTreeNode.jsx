@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-function FileTreeNode({ node, onCreateFile, onCreateDirectory }) {
+function FileTreeNode({ node, onCreateFile, onCreateDirectory, onRename }) {
   const [isOpen, setIsOpen] = useState(true);
 
   const isDirectory = node.type === 'directory';
@@ -23,6 +23,10 @@ function FileTreeNode({ node, onCreateFile, onCreateDirectory }) {
         <span>{isDirectory ? '📁' : '📄'}</span>
         <span>{node.name}</span>
 
+        <button type="button" onClick={() => onRename(node.id, node.name)}>
+          Rename
+        </button>
+
         {isDirectory && (
           <>
             <button type="button" onClick={() => onCreateFile(node.id)}>
@@ -44,6 +48,7 @@ function FileTreeNode({ node, onCreateFile, onCreateDirectory }) {
               node={child}
               onCreateFile={onCreateFile}
               onCreateDirectory={onCreateDirectory}
+              onRename={onRename}
             />
           ))}
         </div>
