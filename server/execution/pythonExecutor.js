@@ -1,11 +1,25 @@
 import { spawn } from 'child_process';
+import { setTimeout, clearTimeout } from 'node:timers';
 
-export function executePython(code, stdin = '') {
+const DEFAULT_TIMEOUT_MS = 5000;
+
+export function executePython(
+  code,
+  stdin = '',
+  timeoutMs = DEFAULT_TIMEOUT_MS
+) {
   return new Promise((resolve, reject) => {
     const pythonProcess = spawn('python3', ['-c', code]);
 
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+    let settled = false;
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      pythonProcess.kill('SIGKILL');
+    }, timeoutMs);
 
     pythonProcess.stdout.on('data', (data) => {
       stdout += data.toString();
@@ -16,15 +30,27 @@ export function executePython(code, stdin = '') {
     });
 
     pythonProcess.on('error', (error) => {
-      reject(error);
+      clearTimeout(timeout);
+
+      if (!settled) {
+        settled = true;
+        reject(error);
+      }
     });
 
     pythonProcess.on('close', (exitCode) => {
-      resolve({
-        stdout,
-        stderr,
-        exitCode,
-      });
+      clearTimeout(timeout);
+
+      if (!settled) {
+        settled = true;
+
+        resolve({
+          stdout,
+          stderr,
+          exitCode,
+          timedOut,
+        });
+      }
     });
 
     if (stdin) {
