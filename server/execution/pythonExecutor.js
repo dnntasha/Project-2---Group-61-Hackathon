@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import { setTimeout, clearTimeout } from 'node:timers';
+import { performance } from 'node:perf_hooks';
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -9,6 +10,7 @@ export function executePython(
   timeoutMs = DEFAULT_TIMEOUT_MS
 ) {
   return new Promise((resolve, reject) => {
+    const startTime = performance.now();
     const pythonProcess = spawn('python3', ['-c', code]);
 
     let stdout = '';
@@ -41,6 +43,8 @@ export function executePython(
     pythonProcess.on('close', (exitCode) => {
       clearTimeout(timeout);
 
+      const runtimeMs = performance.now() - startTime;
+
       if (!settled) {
         settled = true;
 
@@ -49,6 +53,7 @@ export function executePython(
           stderr,
           exitCode,
           timedOut,
+          runtimeMs,
         });
       }
     });
