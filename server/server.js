@@ -17,7 +17,7 @@ app.get('/api/health', (req, res) => {
 });
 
 app.post('/api/execute', async (req, res) => {
-  const { code } = req.body;
+  const { code, stdin = '' } = req.body;
 
   if (typeof code !== 'string') {
     return res.status(400).json({
@@ -25,8 +25,14 @@ app.post('/api/execute', async (req, res) => {
     });
   }
 
+  if (typeof stdin !== 'string') {
+    return res.status(400).json({
+      error: 'stdin must be provided as a string.',
+    });
+  }
+
   try {
-    const result = await executePython(code);
+    const result = await executePython(code, stdin);
     return res.json(result);
   } catch (error) {
     console.error('Python execution failed:', error);

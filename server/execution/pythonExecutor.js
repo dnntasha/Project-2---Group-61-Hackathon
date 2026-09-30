@@ -1,6 +1,6 @@
 import { spawn } from 'child_process';
 
-export function executePython(code) {
+export function executePython(code, stdin = '') {
   return new Promise((resolve, reject) => {
     const pythonProcess = spawn('python3', ['-c', code]);
 
@@ -26,5 +26,11 @@ export function executePython(code) {
         exitCode,
       });
     });
+
+    if (stdin) {
+      pythonProcess.stdin.write(stdin);
+    }
+
+    pythonProcess.stdin.end();
   });
 }
