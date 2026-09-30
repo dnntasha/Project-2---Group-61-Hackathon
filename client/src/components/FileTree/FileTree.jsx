@@ -4,6 +4,7 @@ import {
   addNode,
   createDirectoryNode,
   createFileNode,
+  deleteNode,
   renameNode,
 } from './fileTreeUtils.js';
 import './FileTree.css';
@@ -50,6 +51,18 @@ function FileTree() {
     setTree((currentTree) => renameNode(currentTree, nodeId, newName.trim()));
   }
 
+  function handleDelete(nodeId, nodeName) {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${nodeName}"?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setTree((currentTree) => deleteNode(currentTree, nodeId));
+  }
+
   return (
     <aside className="file-tree">
       <h2>Files</h2>
@@ -59,6 +72,7 @@ function FileTree() {
         onCreateFile={handleCreateFile}
         onCreateDirectory={handleCreateDirectory}
         onRename={handleRename}
+        onDelete={handleDelete}
       />
     </aside>
   );

@@ -53,3 +53,16 @@ export function renameNode(tree, nodeId, newName) {
 
   return tree;
 }
+
+export function deleteNode(tree, nodeId) {
+  if (tree.type !== 'directory') {
+    return tree;
+  }
+
+  return {
+    ...tree,
+    children: tree.children
+      .filter((child) => child.id !== nodeId)
+      .map((child) => deleteNode(child, nodeId)),
+  };
+}
