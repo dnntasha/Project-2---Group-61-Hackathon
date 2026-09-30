@@ -3,6 +3,7 @@ import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import cors from 'cors';
 import { executePython } from './execution/pythonExecutor.js';
+import { processSubmission } from './submission/submissionService.js';
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -39,6 +40,35 @@ app.post('/api/execute', async (req, res) => {
 
     return res.status(500).json({
       error: 'Failed to execute Python code.',
+    });
+  }
+});
+
+app.post('/api/submit', async (req, res) => {
+  const {
+    codebase,
+    testCases,
+    isLeader,
+    submissionsUsed = 0,
+    submissionLimit,
+  } = req.body;
+
+  try {
+    const result = await processSubmission({
+      codebase,
+      testCases,
+      isLeader,
+      submissionsUsed,
+      submissionLimit,
+    });
+
+    return res.status(result.status).json(result);
+  } catch (error) {
+    console.error('Submission failed:', error);
+
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to process submission.',
     });
   }
 });
