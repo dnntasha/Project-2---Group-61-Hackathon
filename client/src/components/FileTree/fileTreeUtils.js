@@ -134,3 +134,45 @@ export function getDirectories(tree) {
 
   return [tree, ...tree.children.flatMap((child) => getDirectories(child))];
 }
+
+export function hasDuplicateName(tree, parentId, name, excludeNodeId = null) {
+  const parent = findNode(tree, parentId);
+
+  if (!parent || parent.type !== 'directory') {
+    return false;
+  }
+
+  return parent.children.some(
+    (child) =>
+      child.id !== excludeNodeId &&
+      child.name.toLowerCase() === name.toLowerCase()
+  );
+}
+
+export function isValidNodeName(name) {
+  if (!name || !name.trim()) {
+    return false;
+  }
+
+  return !name.includes('/') && !name.includes('\\');
+}
+
+export function findParentNode(tree, nodeId) {
+  if (tree.type !== 'directory') {
+    return null;
+  }
+
+  for (const child of tree.children) {
+    if (child.id === nodeId) {
+      return tree;
+    }
+
+    const parent = findParentNode(child, nodeId);
+
+    if (parent) {
+      return parent;
+    }
+  }
+
+  return null;
+}

@@ -10,6 +10,9 @@ import {
   isDescendant,
   moveNode,
   findNode,
+  hasDuplicateName,
+  isValidNodeName,
+  findParentNode,
 } from './fileTreeUtils.js';
 import './FileTree.css';
 
@@ -24,11 +27,23 @@ function FileTree() {
   function handleCreateFile(parentId) {
     const name = window.prompt('Enter file name:');
 
-    if (!name || !name.trim()) {
+    if (name === null) {
       return;
     }
 
-    const newFile = createFileNode(name.trim());
+    const trimmedName = name.trim();
+
+    if (!isValidNodeName(trimmedName)) {
+      window.alert('Please enter a valid file name.');
+      return;
+    }
+
+    if (hasDuplicateName(tree, parentId, trimmedName)) {
+      window.alert('A file or folder with that name already exists.');
+      return;
+    }
+
+    const newFile = createFileNode(trimmedName);
 
     setTree((currentTree) => addNode(currentTree, parentId, newFile));
   }
@@ -36,11 +51,23 @@ function FileTree() {
   function handleCreateDirectory(parentId) {
     const name = window.prompt('Enter folder name:');
 
-    if (!name || !name.trim()) {
+    if (name === null) {
       return;
     }
 
-    const newDirectory = createDirectoryNode(name.trim());
+    const trimmedName = name.trim();
+
+    if (!isValidNodeName(trimmedName)) {
+      window.alert('Please enter a valid folder name.');
+      return;
+    }
+
+    if (hasDuplicateName(tree, parentId, trimmedName)) {
+      window.alert('A file or folder with that name already exists.');
+      return;
+    }
+
+    const newDirectory = createDirectoryNode(trimmedName);
 
     setTree((currentTree) => addNode(currentTree, parentId, newDirectory));
   }
@@ -48,11 +75,25 @@ function FileTree() {
   function handleRename(nodeId, currentName) {
     const newName = window.prompt('Enter new name:', currentName);
 
-    if (!newName || !newName.trim()) {
+    if (newName === null) {
       return;
     }
 
-    setTree((currentTree) => renameNode(currentTree, nodeId, newName.trim()));
+    const trimmedName = newName.trim();
+
+    if (!isValidNodeName(trimmedName)) {
+      window.alert('Please enter a valid name.');
+      return;
+    }
+
+    const parent = findParentNode(tree, nodeId);
+
+    if (parent && hasDuplicateName(tree, parent.id, trimmedName, nodeId)) {
+      window.alert('A file or folder with that name already exists.');
+      return;
+    }
+
+    setTree((currentTree) => renameNode(currentTree, nodeId, trimmedName));
   }
 
   function handleDelete(nodeId, nodeName) {
@@ -76,7 +117,9 @@ function FileTree() {
 
     const destinations = getDirectories(tree).filter(
       (directory) =>
-        directory.id !== nodeId && !isDescendant(nodeToMove, directory.id)
+        directory.id !== nodeId &&
+        !isDescendant(nodeToMove, directory.id) &&
+        !hasDuplicateName(tree, directory.id, nodeToMove.name, nodeId)
     );
 
     if (destinations.length === 0) {
