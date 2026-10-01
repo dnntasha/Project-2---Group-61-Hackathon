@@ -1,15 +1,12 @@
 import express from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-//import cors from 'cors';
 import authRoutes from './routes/auth.js';
 import { authenticate } from './lib/sessions.js';
 
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Enable CORS
-//app.use(cors());
 app.use(express.json());
 
 // Express HTTP REST routes
@@ -52,7 +49,6 @@ wss.on('connection', async (ws, req) => {
     //a message counts as active
     const authValid = await authenticate(token);
     if (!authValid) return ws.close(4001, 'Unauthorised');
-    ws.user = auth.user;
     try {
       const data = JSON.parse(message);
       console.log('Received:', data);
@@ -70,12 +66,12 @@ wss.on('connection', async (ws, req) => {
 
   // Handle disconnect
   ws.on('close', () => {
-    console.log('${ws.user.username} disconnected');
+    console.log(`${ws.user.username} disconnected`);
   });
 });
 
 // Start the HTTP & WebSocket server
 server.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
-  console.log(`WebSocket server running on ws://localhost:${port}`);
+  console.log(`WebSocket server running on ws://localhost:${port}/ws`);
 });
