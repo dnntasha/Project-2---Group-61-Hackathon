@@ -8,7 +8,7 @@ datasource db {
 }
 
 model User {
-    id              Int @id !default(autoincrement())
+    id              Int @id @default(autoincrement())
     username        String @unique
     passwordHash    String 
     createdAt       DateTime @default(now())
@@ -18,6 +18,6 @@ model User {
 model Session {
     id              String @id @default(uuid())
     userId          Int
-    userId          User   @relation(field: [userId], references: [id], onDelete: Cascade)
+    user            User   @relation(fields: [userId], references: [id], onDelete: Cascade)
     lastActivity    DateTime @default(now())
 }
