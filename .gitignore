@@ -8,3 +8,4 @@ devNotes.md
 .vite/
 *.db
 *.db-journal
+.vscode

@@ -46,7 +46,6 @@ export default function LoginPage() {
         <p className="auth-brand">The Hackathon</p>
         <h1>{isLogin ? 'Sign in' : 'Create an account'}</h1>
         <p className="auth-lead">
-          {' '}
           {isLogin
             ? 'Sign in to see the groups, teams and problems.'
             : 'Create a username to join a group.'}
@@ -111,8 +110,7 @@ export default function LoginPage() {
         </form>
 
         <p className="auth-switch">
-          {isLogin ? 'New here?' : 'Do you already have an account?'}
-          {''}
+          {isLogin ? 'New here?' : 'Do you already have an account?'}{' '}
           <button type="button" onClick={switchMode}>
             {isLogin ? 'Create an account' : 'Sign in'}
           </button>

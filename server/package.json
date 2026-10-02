@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node --env-file=.env server.js",
     "dev": "nodemon --exec \"node --env-file=.env\" server.js",
+    "env:setup": "node -e \"const fs=require('fs'); if(!fs.existsSync('.env') && fs.existsSync('.env.example')){ fs.copyFileSync('.env.example', '.env'); console.log('.env created from .env.example'); }\"",
+    "db:setup": "npx prisma generate && npx prisma db push",
     "db:push": "prisma db push",
     "db:studio": "prisma studio"
   },
