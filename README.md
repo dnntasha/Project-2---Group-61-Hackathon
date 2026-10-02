@@ -35,3 +35,4 @@ Frontend: `http://localhost:3000/`
 - Generative AI used to help set-up ESLint, Husky and Prettier for ensuring code functionality, quality and formatting
 - Generative AI was used to aid in the debugging of the 30-minute timeout logic and the calculation of the sessions(how long a user was active or logged on)
 - The sign in animation fade in and out was debugged using Generative AI
+- ChatGPT was used to assist with planning, implementation guidance, debugging, documentation and testing of the file tree, Python execution, test evaluation, submission processing, response area and submission timeline. AI-assisted suggestions were reviewed, adapted and tested before being committed.
