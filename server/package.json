@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node --env-file=.env server.js",
     "dev": "nodemon --exec \"node --env-file=.env\" server.js",
+    "db:setup": "npx prisma generate && npx prisma db push",
     "db:push": "prisma db push",
     "db:studio": "prisma studio"
   },
