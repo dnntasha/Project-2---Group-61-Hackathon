@@ -11,11 +11,8 @@ run `npm run install:all` from the project root to install all the required depe
 ## First time setting up
 
 1. After running `npm run install:all`
-2. `cd server`
-3. `cp .env.example .env` and set the JWT_SECRET to a long combination of letters
-4. `npx prisma db push`
-5. `cd ..`
-6. `npm run dev` (on the main root)
+2. Change JWT_SECRET in .env to a long combination of letters
+3. `npm run dev` (on the main root)
 
 ## If it is not the first time setup
 
