@@ -33,3 +33,5 @@ Frontend: `http://localhost:3000/`
 - Gemini was used for assistance in the debugging process during project creation
 - Generative AI was used to help initialise the project (installing relevant packages and helping initilise project correctly)
 - Generative AI used to help set-up ESLint, Husky and Prettier for ensuring code functionality, quality and formatting
+- Generative AI was used to aid in the debugging of the 30-minute timeout logic and the calculation of the sessions(how long a user was active or logged on)
+- The sign in animation fade in and out was debugged using Generative AI
