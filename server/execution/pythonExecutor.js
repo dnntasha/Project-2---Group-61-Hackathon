@@ -4,6 +4,21 @@ import { performance } from 'node:perf_hooks';
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
+/**
+ * Executes Python source code directly using a child process.
+ *
+ * Used by the /api/execute route for normal code execution rather than
+ * submission evaluation.
+ *
+ * Supports:
+ * - stdin input
+ * - stdout/stderr capture
+ * - configurable execution timeout
+ * - exit-code reporting
+ * - execution runtime measurement
+ *
+ * A timed-out process is terminated with SIGKILL.
+ */
 export function executePython(
   code,
   stdin = '',
@@ -66,6 +81,15 @@ export function executePython(
   });
 }
 
+/**
+ * Executes a Python file from an existing codebase directory.
+ *
+ * This is used by the submission evaluator after the submitted file tree has
+ * been reconstructed inside a temporary directory. The cwd parameter allows
+ * imports between files in the submitted project to work normally.
+ *
+ * Returns the same execution metadata as executePython().
+ */
 export function executePythonFile(
   filePath,
   stdin = '',

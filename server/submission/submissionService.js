@@ -1,5 +1,25 @@
 import { evaluateCodebase } from '../evaluation/codebaseEvaluator.js';
 
+/**
+ * Validates and processes one team submission.
+ *
+ * Current responsibilities:
+ * - Reject submissions from non-leaders.
+ * - Enforce the supplied submission limit.
+ * - Validate that a codebase and test cases were supplied.
+ * - Run the codebase evaluator.
+ * - Return the leaderboard score as { P, T }.
+ *
+ * Integration note:
+ * isLeader, submissionsUsed, submissionLimit and testCases are currently
+ * supplied by the API route. The shared authentication/problem/database
+ * integration can provide these values from persistent application state
+ * without changing the evaluator itself.
+ *
+ * Score contract:
+ * P = percentage of tests passed.
+ * T = total runtime in milliseconds for passed tests.
+ */
 export async function processSubmission({
   codebase,
   testCases,
