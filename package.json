@@ -4,7 +4,8 @@
   "type": "commonjs",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "install:all": "npm install --no-fund --no-audit && npm install --prefix server --no-fund --no-audit && npm install --prefix client --no-fund --no-audit",
+    "install:all": "npm install --no-fund --no-audit && npm install --prefix server --no-fund --no-audit && npm install --prefix client --no-fund --no-audit && npm run setup:backend",
+    "setep:backend": "npm run --prefix server env:setup && npm run --prefix server db:setup",
     "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
     "dev:server": "npm run dev --prefix server",
     "dev:client": "npm run dev --prefix client",
