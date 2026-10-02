@@ -16,6 +16,24 @@ import {
 } from './fileTreeUtils.js';
 import './FileTree.css';
 
+/**
+ * FileTree owns the local representation of the project's file system.
+ *
+ * P4 responsibility:
+ * - Render the recursive file/directory structure.
+ * - Create, rename, delete and move files/directories locally.
+ *
+ * P3 integration:
+ * - The tree currently lives in local React state.
+ * - P3's WebSocket layer should synchronise these file operations between
+ *   team members using the stable node IDs.
+ * - Once shared state is connected, remote operations can update this tree
+ *   through the same tree utility functions used by the local handlers.
+ *
+ * Node format:
+ * File:      { id, name, type: 'file', content }
+ * Directory: { id, name, type: 'directory', children }
+ */
 function FileTree() {
   const [tree, setTree] = useState(() => ({
     id: 'root',
@@ -48,6 +66,8 @@ function FileTree() {
     setTree((currentTree) => addNode(currentTree, parentId, newFile));
   }
 
+  // Creates a file inside the selected directory after validating its name
+  //and checking for a sibling name collision.
   function handleCreateDirectory(parentId) {
     const name = window.prompt('Enter folder name:');
 
@@ -72,6 +92,7 @@ function FileTree() {
     setTree((currentTree) => addNode(currentTree, parentId, newDirectory));
   }
 
+  // Renames a node while excluding that node itself from duplicate-name checks.
   function handleRename(nodeId, currentName) {
     const newName = window.prompt('Enter new name:', currentName);
 
@@ -95,7 +116,7 @@ function FileTree() {
 
     setTree((currentTree) => renameNode(currentTree, nodeId, trimmedName));
   }
-
+  // Removes a node and, for directories, its complete subtree after confirmation.
   function handleDelete(nodeId, nodeName) {
     const confirmed = window.confirm(
       `Are you sure you want to delete "${nodeName}"?`
@@ -107,7 +128,9 @@ function FileTree() {
 
     setTree((currentTree) => deleteNode(currentTree, nodeId));
   }
-
+  // Moves a node to another directory.
+  // Valid destinations exclude the node itself, its descendants and destinations
+  // that would create a sibling name collision.
   function handleMove(nodeId) {
     const nodeToMove = findNode(tree, nodeId);
 

@@ -27,6 +27,9 @@ export default [
         clearInterval: 'readonly',
         WebSocket: 'readonly',
         fetch: 'readonly',
+        localStorage: 'readonly',
+        URL: 'readonly',
+        Event: 'readonly',
       },
     },
     plugins: {

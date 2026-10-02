@@ -1,5 +1,14 @@
 import { useState } from 'react';
 
+/**
+ * Recursively renders one node in the file tree.
+ *
+ * Directories can be expanded/collapsed and recursively render their children.
+ * File operations are passed down from FileTree so that all modifications are
+ * applied to the single tree state owned by the parent component.
+ *
+ * The root node cannot be moved or deleted.
+ */
 function FileTreeNode({
   node,
   onCreateFile,

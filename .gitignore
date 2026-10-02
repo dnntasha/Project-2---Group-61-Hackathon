@@ -5,3 +5,7 @@ TODO.md
 build/
 dist/
 devNotes.md
+.vite/
+*.db
+*.db-journal
+.vscode
