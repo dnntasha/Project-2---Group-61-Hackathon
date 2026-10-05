@@ -22,12 +22,10 @@
 import express from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-
 import { executePython } from './execution/pythonExecutor.js';
 import { processSubmission } from './submission/submissionService.js';
 import authRoutes from './routes/auth.js';
 import teamRoutes from './routes/teams.js';
-import groupRoutes from './routes/groups.js';
 import leaderboardRoutes from './routes/leaderboards.js';
 import { authenticate } from './lib/sessions.js';
 import { runPython } from './lib/pythonRunner.js';
@@ -38,6 +36,7 @@ import {
   createFileNode,
   getFilePathsById,
 } from '../client/src/components/FileTree/fileTreeUtils.js';
+import groupRoutes, { ICON_DIR } from './routes/groups.js';
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -91,6 +90,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/teams', teamRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/leaderboards', leaderboardRoutes);
+app.use('/api/uploads/icons', express.static(ICON_DIR));
 
 /**
  * Thando Python execution endpoint.
