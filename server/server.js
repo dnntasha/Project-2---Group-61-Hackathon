@@ -92,6 +92,8 @@ app.get('/api/health', (req, res) => {
 
 // Authentication routes from the shared backend.
 app.use('/api/auth', authRoutes);
+app.use('/api/groups', groupRoutes);
+app.use('/api/uploads/icons', express.static(ICON_DIR));
 
 // Return teams the authenticated user is allowed to collaborate with.
 app.get('/api/my-teams', requireAuth, async (req, res) => {
