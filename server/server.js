@@ -9,7 +9,7 @@ import { authenticate } from './lib/sessions.js';
 import groupRoutes, { ICON_DIR } from './routes/groups.js';
 
 const app = express();
-const port = process.env.PORT || 5000;
+const port = process.env.PORT || 5001;
 
 app.use(express.json());
 
