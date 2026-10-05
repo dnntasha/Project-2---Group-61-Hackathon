@@ -12,7 +12,10 @@ import {
   requireGroupMember,
   requireNotStarted,
 } from '../middleware/groups.js';
+<<<<<<< HEAD
 import { getEndsAt, getEventStatus } from '../lib/eventTime.js';
+=======
+>>>>>>> b06226b (added another route for users to go to their respoective group or to be added or add)
 
 // Icons are saved in server/uploads/icons and served at /api/uploads/icons.
 export const ICON_DIR = fileURLToPath(
@@ -67,9 +70,12 @@ function toClient(group, isAdmin) {
     maxTeamSize: group.maxTeamSize,
     topK: group.topK,
     startedAt: group.startedAt,
+<<<<<<< HEAD
     endsAt: getEndsAt(group),
     status: getEventStatus(group),
     serverTime: new Date(),
+=======
+>>>>>>> b06226b (added another route for users to go to their respoective group or to be added or add)
   };
 }
 
@@ -191,6 +197,7 @@ router.post(
     });
   }
 );
+<<<<<<< HEAD
 // Send a group invite for admin to start eh event
 router.post(
   '/:groupId/start',
@@ -304,5 +311,7 @@ router.post(
     }
   }
 );
+=======
+>>>>>>> b06226b (added another route for users to go to their respoective group or to be added or add)
 
 export default router;
