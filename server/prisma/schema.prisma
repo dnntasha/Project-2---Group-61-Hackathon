@@ -1,23 +1,77 @@
 generator client {
-    provider = "prisma-client-js"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-    provider = "sqlite"
-    url = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
 }
 
 model User {
-    id              Int @id @default(autoincrement())
-    username        String @unique
-    passwordHash    String 
-    createdAt       DateTime @default(now())
-    sessions        Session[]
+  id           Int       @id @default(autoincrement())
+  username     String    @unique
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  sessions     Session[]
+
+  adminGroups      Group[]       @relation("GroupAdmin")
+  groupMemberships GroupMember[]
+  ledTeams         Team[]        @relation("TeamLeader")
+  teamMemberships  TeamMember[]
 }
 
 model Session {
-    id              String @id @default(uuid())
-    userId          Int
-    user            User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-    lastActivity    DateTime @default(now())
+  id           String   @id @default(uuid())
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastActivity DateTime @default(now())
+}
+
+model Group {
+  id          Int    @id @default(autoincrement())
+  name        String @unique
+  adminId     Int
+  maxTeamSize Int
+
+  admin   User          @relation("GroupAdmin", fields: [adminId], references: [id])
+  members GroupMember[]
+  teams   Team[]
+}
+
+model GroupMember {
+  id       Int      @id @default(autoincrement())
+  groupId  Int
+  userId   Int
+  joinedAt DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+}
+
+model Team {
+  id        Int      @id @default(autoincrement())
+  name      String
+  groupId   Int
+  leaderId  Int
+  createdAt DateTime @default(now())
+
+  group   Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  leader  User         @relation("TeamLeader", fields: [leaderId], references: [id])
+  members TeamMember[]
+
+  @@unique([groupId, name])
+}
+
+model TeamMember {
+  id       Int      @id @default(autoincrement())
+  teamId   Int
+  userId   Int
+  joinedAt DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
 }
