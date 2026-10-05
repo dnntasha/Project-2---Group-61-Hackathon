@@ -39,7 +39,7 @@ import {
 import groupRoutes, { ICON_DIR } from './routes/groups.js';
 
 const app = express();
-const port = process.env.PORT || 5000;
+const port = process.env.PORT || 5001;
 
 // Starter contents of main.py in a newly created room
 const defaultCode = `def main():
