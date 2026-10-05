@@ -20,8 +20,9 @@ app.get('/api/health', (req, res) => {
 
 // Authentication routes from the shared backend.
 app.use('/api/auth', authRoutes);
-app.use('/api/uploads/icons', express.static(ICON_DIR));
+app.use('/api/groups', groupRoutes);
 app.use('/api/teams', teamRoutes);
+app.use('/api/uploads/icons', express.static(ICON_DIR));
 
 /**
  * Thando Python execution endpoint.
