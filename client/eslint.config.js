@@ -30,6 +30,7 @@ export default [
         localStorage: 'readonly',
         URL: 'readonly',
         Event: 'readonly',
+        FormData: 'readonly',
       },
     },
     plugins: {

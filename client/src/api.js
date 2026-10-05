@@ -15,14 +15,15 @@ export function getToken() {
 
 export async function api(path, { method = 'GET', body } = {}) {
   const token = getToken();
+  const isUpload = body instanceof FormData;
 
   const res = await fetch(`/api${path}`, {
     method,
     headers: {
-      'Content-Type': 'application/json',
+      ...(!isUpload && { 'Content-Type': 'application/json' }),
       ...(token && { Authorization: `Bearer ${token}` }),
     },
-    body: body ? JSON.stringify(body) : undefined,
+    body: isUpload ? body : body ? JSON.stringify(body) : undefined,
   });
   markActivity();
 
