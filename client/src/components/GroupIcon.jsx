@@ -4,12 +4,12 @@ export default function GroupIcon({ group, size = 40 }) {
 
   if (group.iconUrl) {
     return (
-      <imp className="group-icon" src={group.iconUrl} alt="" style={style} />
+      <img className="group-icon" src={group.iconUrl} alt="" style={style} />
     );
   }
   return (
     <span
-      className="grop-icon group-icon-letter"
+      className="group-icon group-icon-letter"
       style={style}
       aria-hidden="true"
     >
