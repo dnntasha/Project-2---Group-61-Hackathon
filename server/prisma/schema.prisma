@@ -31,7 +31,12 @@ model Group {
   id          Int    @id @default(autoincrement())
   name        String @unique
   adminId     Int
-  maxTeamSize Int
+  maxTeamSize Int    @default(4)
+  iconFile    String?
+  durationMin Int    @default(120)
+  topK        Int    @default(1)
+  startedAt   DateTime?
+  createdAt   DateTime? @default(now())
 
   admin   User          @relation("GroupAdmin", fields: [adminId], references: [id])
   members GroupMember[]
