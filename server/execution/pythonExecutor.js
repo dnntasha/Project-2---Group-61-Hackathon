@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import { setTimeout, clearTimeout } from 'node:timers';
 import { performance } from 'node:perf_hooks';
 
-const DEFAULT_TIMEOUT_MS = 5000;
+const DEFAULT_TIMEOUT_MS = 5001;
 
 /**
  * Executes Python source code directly using a child process.
