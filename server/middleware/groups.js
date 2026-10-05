@@ -1,5 +1,5 @@
 //this will be implemented after the requireAuth
-import { prisam } from '../lib/prisma.js';
+import { prisma } from '../lib/prisma.js';
 
 export const hasStarted = (group) => group.startedAt !== null;
 
@@ -9,7 +9,7 @@ export async function requireGroupMember(req, res, next) {
   try {
     const groupId = Number(req.params.groupId);
     const group = Number.isInteger(groupId)
-      ? await prisam.group.findUnique({ where: { id: groupId } })
+      ? await prisma.group.findUnique({ where: { id: groupId } })
       : null;
 
     const isAdmin = Boolean(group) && group.adminId === req.user.id;
@@ -17,7 +17,7 @@ export async function requireGroupMember(req, res, next) {
       isAdmin ||
       (Boolean(group) &&
         Boolean(
-          await prisam.groupMember.findUnique({
+          await prisma.groupMember.findUnique({
             where: { groupId_userId: { groupId, userId: req.user.id } },
           })
         ));
@@ -35,11 +35,9 @@ export async function requireGroupMember(req, res, next) {
 
 export function requireGroupAdmin(req, res, next) {
   if (!req.isGroupAdmin) {
-    return res
-      .status(403)
-      .json({
-        error: "You're not admin...(-_-)Only Admin has this permission. ",
-      });
+    return res.status(403).json({
+      error: "You're not admin...(-_-)Only Admin has this permission. ",
+    });
   }
   next();
 }
