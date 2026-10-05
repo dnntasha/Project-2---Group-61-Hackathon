@@ -1,11 +1,11 @@
 import express from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-
 import { executePython } from './execution/pythonExecutor.js';
 import { processSubmission } from './submission/submissionService.js';
 import authRoutes from './routes/auth.js';
 import { authenticate } from './lib/sessions.js';
+import groupRoutes, { ICON_DIR } from './routes/groups.js';
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -19,6 +19,8 @@ app.get('/api/health', (req, res) => {
 
 // Authentication routes from the shared backend.
 app.use('/api/auth', authRoutes);
+app.use('/api/groups', groupRoutes);
+app.use('/api/uploads/icons', express.static(ICON_DIR));
 
 /**
  * Thando Python execution endpoint.

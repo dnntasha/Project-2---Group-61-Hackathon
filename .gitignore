@@ -9,3 +9,4 @@ devNotes.md
 *.db
 *.db-journal
 .vscode
+server/uploads/
