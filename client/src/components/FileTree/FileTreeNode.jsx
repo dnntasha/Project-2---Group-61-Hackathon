@@ -16,10 +16,14 @@ function FileTreeNode({
   onRename,
   onDelete,
   onMove,
+  onSelectFile,
+  path,
 }) {
   const [isOpen, setIsOpen] = useState(true);
 
   const isDirectory = node.type === 'directory';
+  const nodePath =
+    node.id === 'root' ? '' : path ? `${path}/${node.name}` : node.name;
 
   return (
     <div className="file-tree-node">
@@ -37,7 +41,17 @@ function FileTreeNode({
         )}
 
         <span>{isDirectory ? '📁' : '📄'}</span>
-        <span>{node.name}</span>
+        {isDirectory ? (
+          <span>{node.name}</span>
+        ) : (
+          <button
+            type="button"
+            className="file-tree-file"
+            onClick={() => onSelectFile?.(nodePath)}
+          >
+            {node.name}
+          </button>
+        )}
 
         <button type="button" onClick={() => onRename(node.id, node.name)}>
           Rename
@@ -79,6 +93,8 @@ function FileTreeNode({
               onRename={onRename}
               onDelete={onDelete}
               onMove={onMove}
+              onSelectFile={onSelectFile}
+              path={nodePath}
             />
           ))}
         </div>
