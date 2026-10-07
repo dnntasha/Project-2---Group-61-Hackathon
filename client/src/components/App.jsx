@@ -7,7 +7,6 @@ import { ProtectedRoute } from './ProtectedRoute.jsx';
 import LandingPage from '../pages/LandingPage.jsx';
 import ResponseArea from './ResponseArea/ResponseArea.jsx';
 import SubmissionTimeline from './SubmissionTimeline/SubmissionTimeline.jsx';
-import TempCode from '../pages/TempCode.jsx';
 import CodeEditor from './CodeEditor.jsx';
 import './App.css';
 
@@ -53,7 +52,7 @@ function AppRoutes() {
         <Route path="/home" element={<LandingPage />} />
         <Route path="/code" element={<ResponseArea />} />
         <Route path="/codes" element={<SubmissionTimeline />} />
-        <Route path="/coding" element={<TempCode />} />
+        <Route path="/coding" element={<CodeEditor />} />
         <Route path="/code-editor" element={<CodeEditor />} />
         {/* Add additional protected routes here (e.g. /profile, /settings) */}
       </Route>
