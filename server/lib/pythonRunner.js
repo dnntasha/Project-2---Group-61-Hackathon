@@ -2,7 +2,6 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import React, { useState, useEffect } from 'react';
 
 const EXECUTION_TIMEOUT_MS = 5000;
 const MAX_OUTPUT_BYTES = 64 * 1024;
