@@ -1,13 +1,13 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import LoginPage from '../pages/LoginPage.jsx';
-import FileTree from './FileTree/FileTree.jsx';
-import { AuthProvider, useAuth } from '../auth/AuthContext.jsx';
-import { ProtectedRoute } from './ProtectedRoute.jsx';
-import LandingPage from '../pages/LandingPage.jsx';
-import ResponseArea from './ResponseArea/ResponseArea.jsx';
-import SubmissionTimeline from './SubmissionTimeline/SubmissionTimeline.jsx';
-import CodeEditor from './CodeEditor/CodeEditor.jsx';
+import LoginPage from './pages/LoginPage.jsx';
+import FileTree from './components/FileTree/FileTree.jsx';
+import { AuthProvider, useAuth } from './auth/AuthContext.jsx';
+import { ProtectedRoute } from './auth/ProtectedRoute.jsx';
+import LandingPage from './pages/LandingPage.jsx';
+import ResponseArea from './components/ResponseArea/ResponseArea.jsx';
+import SubmissionTimeline from './components/SubmissionTimeline/SubmissionTimeline.jsx';
+import CodeEditor from './components/CodeEditor/CodeEditor.jsx';
 import './App.css';
 
 // Main authenticated layout
@@ -69,7 +69,7 @@ function AppRoutes() {
   );
 }
 
-export default function PlaceholderApp() {
+export default function App() {
   return (
     <>
       <AuthProvider>
