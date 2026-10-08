@@ -17,6 +17,7 @@ function FileTreeNode({
   onDelete,
   onMove,
   onSelectFile,
+  selectedPath,
   path,
 }) {
   const [isOpen, setIsOpen] = useState(true);
@@ -47,7 +48,8 @@ function FileTreeNode({
         ) : (
           <button
             type="button"
-            className="file-tree-file"
+            className={`file-tree-file${nodePath === selectedPath ? ' selected' : ''}`}
+            aria-current={nodePath === selectedPath ? 'true' : undefined}
             onClick={() => onSelectFile?.(nodePath)}
           >
             {node.name}
@@ -95,6 +97,7 @@ function FileTreeNode({
               onDelete={onDelete}
               onMove={onMove}
               onSelectFile={onSelectFile}
+              selectedPath={selectedPath}
               path={nodePath}
             />
           ))}

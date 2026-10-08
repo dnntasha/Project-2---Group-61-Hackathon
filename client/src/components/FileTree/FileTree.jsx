@@ -34,7 +34,7 @@ import './FileTree.css';
  * File:      { id, name, type: 'file', content }
  * Directory: { id, name, type: 'directory', children }
  */
-function FileTree({ onSelectFile }) {
+function FileTree({ onSelectFile, selectedPath }) {
   //allows us to select files
   const [tree, setTree] = useState(() => ({
     id: 'root',
@@ -191,6 +191,7 @@ function FileTree({ onSelectFile }) {
         onDelete={handleDelete}
         onMove={handleMove}
         onSelectFile={onSelectFile} //adds functionality of selecting files
+        selectedPath={selectedPath} // highlights the open file
         path=""
       />
     </aside>

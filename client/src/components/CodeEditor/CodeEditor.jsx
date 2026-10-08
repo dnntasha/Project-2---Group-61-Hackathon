@@ -1,9 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useSearchParams } from 'react-router-dom';
 import FileTree from '../FileTree/FileTree.jsx';
 import { getToken } from '../../api.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
+import {
+  applyOp,
+  compose,
+  diffToOp,
+  transform,
+  transformIndex,
+} from '../../../../server/lib/textOp.js';
 import './CodeEditor.css';
+
+// The file that is open when the editor first loads
+const DEFAULT_FILE = 'main.py';
 
 // Builds the WebSocket URL, defaulting to ws(s)://<current host>/ws.
 // The session token is passed as a query param because browsers can't set
@@ -17,37 +33,6 @@ function getWebSocketUrl(wsUrl, roomId, problemId) {
   url.searchParams.set('roomId', roomId);
   url.searchParams.set('problemId', problemId);
   return url.toString();
-}
-
-// Diffs two versions of the text and returns the smallest single splice that
-// turns `previous` into `next`: { index, inserted, deletedCount }.
-// It trims the common prefix and common suffix; what remains in between is
-// the edit. This is what gets sent to the server instead of the whole file.
-function getTextEdit(previous, next) {
-  let start = 0;
-  while (
-    start < previous.length &&
-    start < next.length &&
-    previous[start] === next[start]
-  ) {
-    start += 1;
-  }
-
-  let suffixLength = 0;
-  while (
-    suffixLength < previous.length - start &&
-    suffixLength < next.length - start &&
-    previous[previous.length - suffixLength - 1] ===
-      next[next.length - suffixLength - 1]
-  ) {
-    suffixLength += 1;
-  }
-
-  return {
-    index: start,
-    inserted: next.slice(start, next.length - suffixLength),
-    deletedCount: previous.length - start - suffixLength,
-  };
 }
 
 // Formats a RUN_RESULTS message as the text shown in the terminal panel
@@ -70,8 +55,21 @@ function getRunOutput(message) {
 /**
  * Collaborative Python editor.
  *
- * Connects to the server over a WebSocket, keeps the active file in sync with
- * other users in the same room, and lets the user run the file on the server.
+ * Connects to the server over a WebSocket and keeps every open file in sync
+ * with the other users in the same room, so several people can type in the
+ * same file at the same time and see each other's changes live.
+ *
+ * How syncing works (client side of operational transformation, see
+ * lib/textOp.js):
+ *  - For each file we track the last server `revision` we have seen, at most
+ *    one `outstanding` operation that was sent but not yet acknowledged, a
+ *    `buffer` operation holding everything typed since then, and `text` (what
+ *    the user currently sees).
+ *  - Typing updates `text` immediately and is added to the buffer. If nothing
+ *    is outstanding, the buffer is sent; otherwise it waits for the ACK.
+ *  - A remote operation is transformed against our outstanding and buffered
+ *    changes before it is applied, so nobody's typing is overwritten, and the
+ *    caret is shifted so it stays where the user was working.
  *
  * Props:
  *  - roomId:    room to join (falls back to ?roomId=, then the user's own room)
@@ -85,7 +83,8 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
     roomId ||
     searchParams.get('roomId') ||
     (user ? `user-${user.id}` : 'default-room');
-  const [activeFilePath, setActiveFilePath] = useState('main.py');
+  // main.py is open as soon as the editor loads
+  const [activeFilePath, setActiveFilePath] = useState(DEFAULT_FILE);
   const [code, setCode] = useState('');
   const [isConnected, setIsConnected] = useState(false);
   const [isReady, setIsReady] = useState(false);
@@ -99,94 +98,191 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   // without being re-created (or triggering renders) on every change.
   const textareaRef = useRef(null);
   const socketRef = useRef(null);
-  const codeRef = useRef(code);
   const activePathRef = useRef(activeFilePath);
-  // filePath -> last revision number we know of (used to detect missed edits)
-  const revisionsRef = useRef(new Map());
+  // filePath -> { revision, outstanding, buffer, text } (see above)
+  const filesRef = useRef(new Map());
+  // Caret/selection to restore after a remote edit re-renders the textarea
+  const pendingSelectionRef = useRef(null);
   const requestCounterRef = useRef(0);
 
-  // Keep refs in sync with state on every render
-  codeRef.current = code;
+  // Keep the ref in sync with state on every render
   activePathRef.current = activeFilePath;
 
-  // Applies a message from the server to local state
-  const handleIncomingMessage = useCallback((message) => {
-    switch (message.type) {
-      // Full room state on connect: show the active file, or request it if the
-      // room doesn't have it yet
-      case 'INIT_CODEBASE': {
-        const revisions = new Map(Object.entries(message.revisions || {}));
-        revisionsRef.current = revisions;
-        const currentPath = activePathRef.current;
-        if (message.files?.[currentPath] !== undefined) {
-          codeRef.current = message.files[currentPath];
-          setCode(message.files[currentPath]);
-          setIsReady(true);
-        } else {
-          socketRef.current?.send(
-            JSON.stringify({ type: 'SELECT_FILE', filePath: currentPath })
-          );
-          setIsFileLoading(true);
-        }
-        break;
+  // Restore the caret after React has written a remote change to the textarea
+  useLayoutEffect(() => {
+    const selection = pendingSelectionRef.current;
+    const textarea = textareaRef.current;
+    if (selection && textarea) {
+      pendingSelectionRef.current = null;
+      if (document.activeElement === textarea) {
+        textarea.setSelectionRange(selection.start, selection.end);
       }
+    }
+  }, [code]);
 
-      // Authoritative copy of one file (response to SELECT_FILE, or sent when
-      // our edit was based on a stale revision) - overwrites local content
-      case 'FILE_SNAPSHOT':
-        revisionsRef.current.set(message.filePath, message.revision);
-        if (message.filePath === activePathRef.current) {
-          codeRef.current = message.code;
-          setCode(message.code);
-          setIsReady(true);
-          setIsFileLoading(false);
-        }
-        break;
+  // Sends a payload if the socket is open; returns whether it was sent
+  const sendWsMessage = useCallback((payload) => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify(payload));
+      return true;
+    }
+    setTerminalOutput(
+      'Not connected. Reconnect before editing or running code.'
+    );
+    return false;
+  }, []);
 
-      // Another user's edit. Only apply it if it is the very next revision;
-      // otherwise we missed something, so ask for a fresh snapshot.
-      case 'TEXT_EDIT': {
-        const currentRevision = revisionsRef.current.get(message.filePath) ?? 0;
-        if (message.revision !== currentRevision + 1) {
-          socketRef.current?.send(
-            JSON.stringify({
-              type: 'SELECT_FILE',
-              filePath: message.filePath,
-            })
-          );
-          break;
-        }
-        revisionsRef.current.set(message.filePath, message.revision);
-        if (message.filePath === activePathRef.current) {
-          const updatedCode =
-            codeRef.current.slice(0, message.index) +
-            message.inserted +
-            codeRef.current.slice(message.index + message.deletedCount);
-          codeRef.current = updatedCode;
-          setCode(updatedCode);
-        }
-        break;
+  // Sends the user's buffered changes to the server, but only when no earlier
+  // operation is still awaiting its ACK (one in flight at a time keeps the
+  // transform logic simple and the server's view unambiguous)
+  const flushFile = useCallback(
+    (filePath) => {
+      const file = filesRef.current.get(filePath);
+      if (!file || file.outstanding || !file.buffer) return;
+      if (
+        sendWsMessage({
+          type: 'TEXT_EDIT',
+          filePath,
+          op: file.buffer,
+          baseRevision: file.revision,
+        })
+      ) {
+        file.outstanding = file.buffer;
+        file.buffer = null;
       }
+    },
+    [sendWsMessage]
+  );
 
-      // Output of a RUN_CODE request
-      case 'RUN_RESULTS':
-        setIsRunning(false);
-        setTerminalOutput(getRunOutput(message));
-        break;
-
-      case 'SUBMISSION_UNAVAILABLE':
-        setTerminalOutput(message.message);
-        break;
-
-      case 'ERROR':
-        setTerminalOutput(`Editor error: ${message.error}`);
-        setIsFileLoading(false);
-        break;
-
-      default:
-        break;
+  // Replaces our whole record of a file with the server's version, and shows
+  // it if it is the active file
+  const resetFile = useCallback((filePath, text, revision) => {
+    filesRef.current.set(filePath, {
+      revision,
+      outstanding: null,
+      buffer: null,
+      text,
+    });
+    if (filePath === activePathRef.current) {
+      pendingSelectionRef.current = null;
+      setCode(text);
+      setIsReady(true);
+      setIsFileLoading(false);
     }
   }, []);
+
+  // Applies an edit made by another user
+  const applyRemoteEdit = useCallback(
+    (message) => {
+      const file = filesRef.current.get(message.filePath);
+      // Unknown file, or we missed a revision: fetch a fresh copy instead
+      if (!file || message.revision !== file.revision + 1) {
+        sendWsMessage({ type: 'SELECT_FILE', filePath: message.filePath });
+        return;
+      }
+
+      try {
+        // Rebase the remote operation over our outstanding op and buffered
+        // typing (and rebase those over it) so it fits what the user sees
+        let remote = message.op;
+        if (file.outstanding) {
+          [file.outstanding, remote] = transform(file.outstanding, remote);
+        }
+        if (file.buffer) {
+          [file.buffer, remote] = transform(file.buffer, remote);
+        }
+
+        const isActive = message.filePath === activePathRef.current;
+        const textarea = textareaRef.current;
+        const selection =
+          isActive && textarea
+            ? {
+                start: transformIndex(remote, textarea.selectionStart),
+                end: transformIndex(remote, textarea.selectionEnd),
+              }
+            : null;
+
+        file.text = applyOp(file.text, remote);
+        file.revision = message.revision;
+        if (isActive) {
+          pendingSelectionRef.current = selection;
+          setCode(file.text);
+        }
+      } catch (error) {
+        // Our copy has drifted from the server's; ask for the server's copy
+        console.error('Could not apply remote edit, resyncing:', error);
+        sendWsMessage({ type: 'SELECT_FILE', filePath: message.filePath });
+      }
+    },
+    [sendWsMessage]
+  );
+
+  // Applies a message from the server to local state
+  const handleIncomingMessage = useCallback(
+    (message) => {
+      switch (message.type) {
+        // Full room state on connect: show the active file, or request it if
+        // the room doesn't have it yet
+        case 'INIT_CODEBASE': {
+          filesRef.current = new Map();
+          for (const [filePath, text] of Object.entries(message.files || {})) {
+            resetFile(filePath, text, message.revisions?.[filePath] ?? 0);
+          }
+          if (!filesRef.current.has(activePathRef.current)) {
+            socketRef.current?.send(
+              JSON.stringify({
+                type: 'SELECT_FILE',
+                filePath: activePathRef.current,
+              })
+            );
+            setIsFileLoading(true);
+          }
+          break;
+        }
+
+        // Authoritative copy of one file (response to SELECT_FILE, or sent
+        // when the server couldn't reconcile our edit) - overwrites local text
+        case 'FILE_SNAPSHOT':
+          resetFile(message.filePath, message.code, message.revision);
+          break;
+
+        // Another user's edit, already rebased onto the server's history
+        case 'TEXT_EDIT':
+          applyRemoteEdit(message);
+          break;
+
+        // The server accepted our outstanding edit: it is now part of the
+        // confirmed document, so send anything typed in the meantime
+        case 'ACK': {
+          const file = filesRef.current.get(message.filePath);
+          if (!file?.outstanding) break;
+          file.outstanding = null;
+          file.revision = message.revision;
+          flushFile(message.filePath);
+          break;
+        }
+
+        // Output of a RUN_CODE request
+        case 'RUN_RESULTS':
+          setIsRunning(false);
+          setTerminalOutput(getRunOutput(message));
+          break;
+
+        case 'SUBMISSION_UNAVAILABLE':
+          setTerminalOutput(message.message);
+          break;
+
+        case 'ERROR':
+          setTerminalOutput(`Editor error: ${message.error}`);
+          setIsFileLoading(false);
+          break;
+
+        default:
+          break;
+      }
+    },
+    [applyRemoteEdit, flushFile, resetFile]
+  );
 
   // Open the socket when the room/problem/url changes and close it on cleanup.
   // `active` guards against callbacks firing after the effect was cleaned up.
@@ -249,37 +345,20 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
     };
   }, [activeRoomId, handleIncomingMessage, problemId, wsUrl]);
 
-  // Sends a payload if the socket is open; returns whether it was sent
-  const sendWsMessage = (payload) => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify(payload));
-      return true;
-    }
-    setTerminalOutput(
-      'Not connected. Reconnect before editing or running code.'
-    );
-    return false;
-  };
-
-  // Applies a local change optimistically, then sends it to the server as a
-  // minimal edit. We bump our expected revision immediately; if the server
-  // disagrees it replies with a FILE_SNAPSHOT that corrects us.
+  // Applies a local change immediately, then syncs it to the server.
   // `cursorPosition` restores the caret after React re-renders the textarea.
   const applyLocalEdit = (updatedCode, cursorPosition) => {
-    const previousCode = codeRef.current;
-    const edit = getTextEdit(previousCode, updatedCode);
     const filePath = activePathRef.current;
-    const baseRevision = revisionsRef.current.get(filePath) ?? 0;
+    const file = filesRef.current.get(filePath);
+    if (!file) return;
 
-    codeRef.current = updatedCode;
+    if (updatedCode === file.text) return;
+    // The change since the previous text, added to anything not yet sent
+    const op = diffToOp(file.text, updatedCode);
+    file.buffer = file.buffer ? compose(file.buffer, op) : op;
+    file.text = updatedCode;
     setCode(updatedCode);
-    const sent = sendWsMessage({
-      type: 'TEXT_EDIT',
-      filePath,
-      ...edit,
-      baseRevision,
-    });
-    if (sent) revisionsRef.current.set(filePath, baseRevision + 1);
+    flushFile(filePath);
 
     if (cursorPosition !== undefined) {
       requestAnimationFrame(() => {
@@ -293,13 +372,22 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
     applyLocalEdit(event.target.value);
   };
 
-  // Switches the active file: clears the editor and requests the file's contents
+  // Switches the active file. Files we already hold are shown straight away
+  // (the server's broadcasts keep them live); others are requested first.
   const handleSelectFile = (filePath) => {
     if (filePath === activePathRef.current) return;
     activePathRef.current = filePath;
     setActiveFilePath(filePath);
+    pendingSelectionRef.current = null;
+
+    const file = filesRef.current.get(filePath);
+    if (file) {
+      setCode(file.text);
+      setIsReady(true);
+      setIsFileLoading(false);
+      return;
+    }
     setCode('');
-    codeRef.current = '';
     setIsReady(false);
     setIsFileLoading(true);
     sendWsMessage({ type: 'SELECT_FILE', filePath });
@@ -376,7 +464,7 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
         type: 'RUN_CODE',
         requestId,
         filePath: activePathRef.current,
-        code: codeRef.current,
+        code: filesRef.current.get(activePathRef.current)?.text ?? '',
       })
     ) {
       setIsRunning(true);
@@ -385,22 +473,25 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   };
 
   return (
-    <div className="editor-container">
+    <div className="editor page-enter">
       <header className="editor-header">
-        <div className="editor-status">
-          <span
-            className={`status-indicator ${isConnected ? 'connected' : 'disconnected'}`}
-            aria-hidden="true"
-          />
-          <span role="status">
-            {isConnected ? 'Connected' : 'Disconnected'}
-          </span>
-          <span className="room-label">Room: {activeRoomId}</span>
+        <div className="editor-title">
+          <p className="editor-brand">The Hackathon</p>
+          <div className="editor-status">
+            <span
+              className={`status-indicator ${isConnected ? 'connected' : 'disconnected'}`}
+              aria-hidden="true"
+            />
+            <span role="status">
+              {isConnected ? 'Connected' : 'Disconnected'}
+            </span>
+            <span className="room-label">Room: {activeRoomId}</span>
+          </div>
         </div>
 
         <div className="editor-actions">
           <button
-            className="action-btn run-btn"
+            className="editor-btn editor-btn-primary"
             type="button"
             onClick={handleRunCode}
             disabled={!isReady || isRunning || isFileLoading}
@@ -408,7 +499,7 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
             {isRunning ? 'Running...' : 'Run Python'}
           </button>
           <button
-            className="action-btn submit-btn"
+            className="editor-btn"
             type="button"
             disabled
             title="Grading will be added later."
@@ -420,7 +511,10 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
 
       <div className="editor-body">
         <aside className="editor-sidebar">
-          <FileTree onSelectFile={handleSelectFile} />
+          <FileTree
+            onSelectFile={handleSelectFile}
+            selectedPath={activeFilePath}
+          />
         </aside>
 
         <main className="editor-workspace">
