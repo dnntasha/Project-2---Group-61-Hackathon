@@ -35,6 +35,7 @@ import './FileTree.css';
  * Directory: { id, name, type: 'directory', children }
  */
 function FileTree({ onSelectFile }) {
+  //allows us to select files
   const [tree, setTree] = useState(() => ({
     id: 'root',
     name: 'Code',
@@ -189,7 +190,7 @@ function FileTree({ onSelectFile }) {
         onRename={handleRename}
         onDelete={handleDelete}
         onMove={handleMove}
-        onSelectFile={onSelectFile}
+        onSelectFile={onSelectFile} //adds functionality of selecting files
         path=""
       />
     </aside>

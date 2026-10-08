@@ -7,6 +7,8 @@ import { runPython } from './lib/pythonRunner.js';
 
 const app = express();
 const port = process.env.PORT || 5000;
+
+//default code (when nothing has been changed)
 const defaultCode = `def main():
     print("Hello, Hackathon!")
 
@@ -16,9 +18,12 @@ if __name__ == "__main__":
 const rooms = new Map();
 const MAX_CODE_BYTES = 256 * 1024;
 const MAX_FILES_PER_ROOM = 200;
-const ROOM_ID_PATTERN = /^[\w-]{1,64}$/;
+const ROOM_ID_PATTERN = /^[\w-]{1,64}$/; //REGEX expression
+// basically any combination of characters (including numbers) or hyphens that is between 1 and 64 is allowed
 
 function isValidFilePath(filePath) {
+  //ensures that the filePath is valid
+  // ensures that the path is a string, of suitable length and follows and appropriate format
   return (
     typeof filePath === 'string' &&
     filePath.length > 0 &&

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import FileTree from './FileTree/FileTree.jsx';
-import { getToken } from '../api.js';
-import { useAuth } from '../auth/AuthContext.jsx';
+import FileTree from '../FileTree/FileTree.jsx';
+import { getToken } from '../../api.js';
+import { useAuth } from '../../auth/AuthContext.jsx';
 import './CodeEditor.css';
 
 function getWebSocketUrl(wsUrl, roomId, problemId) {

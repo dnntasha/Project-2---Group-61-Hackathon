@@ -41,7 +41,8 @@ function FileTreeNode({
         )}
 
         <span>{isDirectory ? '📁' : '📄'}</span>
-        {isDirectory ? (
+
+        {isDirectory /*This block of code allows us to be able to select different files to edit*/ ? (
           <span>{node.name}</span>
         ) : (
           <button

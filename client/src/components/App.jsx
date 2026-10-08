@@ -7,7 +7,7 @@ import { ProtectedRoute } from './ProtectedRoute.jsx';
 import LandingPage from '../pages/LandingPage.jsx';
 import ResponseArea from './ResponseArea/ResponseArea.jsx';
 import SubmissionTimeline from './SubmissionTimeline/SubmissionTimeline.jsx';
-import CodeEditor from './CodeEditor.jsx';
+import CodeEditor from './CodeEditor/CodeEditor.jsx';
 import './App.css';
 
 // Main authenticated layout
