@@ -57,9 +57,10 @@ model Team {
   leaderId  Int
   createdAt DateTime @default(now())
 
-  group   Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  leader  User         @relation("TeamLeader", fields: [leaderId], references: [id])
-  members TeamMember[]
+  group       Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  leader      User         @relation("TeamLeader", fields: [leaderId], references: [id])
+  members     TeamMember[]
+  submissions Submission[]
 
   @@unique([groupId, name])
 }
@@ -74,4 +75,40 @@ model TeamMember {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([teamId, userId])
+}
+
+model Problem {
+  id              Int      @id @default(autoincrement())
+  title           String
+  description     String
+  submissionLimit Int      @default(5)
+  createdAt       DateTime @default(now())
+
+  testCases   TestCase[]
+  submissions Submission[]
+}
+
+model TestCase {
+  id             Int     @id @default(autoincrement())
+  problemId      Int
+  input          String
+  expectedOutput String
+  timeLimit      Int     @default(5000)
+  hidden         Boolean @default(false)
+
+  problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+}
+
+model Submission {
+  id        Int      @id @default(autoincrement())
+  teamId    Int
+  problemId Int
+  scoreP    Float
+  scoreT    Float
+  createdAt DateTime @default(now())
+
+  team    Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+
+  @@index([teamId, problemId])
 }
