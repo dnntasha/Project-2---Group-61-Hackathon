@@ -1,9 +1,10 @@
 import express from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
+import { requireAuth } from './middleware/auth.js';
+import { prisma } from './lib/prisma.js';
 
 import { executePython } from './execution/pythonExecutor.js';
-import { processSubmission } from './submission/submissionService.js';
 import authRoutes from './routes/auth.js';
 import { authenticate } from './lib/sessions.js';
 
@@ -65,25 +66,41 @@ app.post('/api/execute', async (req, res) => {
  * The shared application can later replace these request-body values with
  * authenticated team/problem/database state without changing the evaluator.
  */
-app.post('/api/submit', async (req, res) => {
-  const {
-    codebase,
-    testCases,
-    isLeader,
-    submissionsUsed = 0,
-    submissionLimit,
-  } = req.body;
+app.post('/api/submit', requireAuth, async (req, res) => {
+  const { teamId } = req.body;
+
+  if (!Number.isInteger(teamId) || teamId <= 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'A valid team ID is required.',
+    });
+  }
 
   try {
-    const result = await processSubmission({
-      codebase,
-      testCases,
-      isLeader,
-      submissionsUsed,
-      submissionLimit,
+    const team = await prisma.team.findUnique({
+      where: { id: teamId },
     });
 
-    return res.status(result.status).json(result);
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        error: 'Team not found.',
+      });
+    }
+
+    if (team.leaderId !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        error: 'Only the team leader may submit a solution.',
+      });
+    }
+
+    // Grading remains disabled until trusted problem test cases,
+    // submission limits and persistence are integrated.
+    return res.status(503).json({
+      success: false,
+      error: 'Submission grading is not yet available.',
+    });
   } catch (error) {
     console.error('Submission failed:', error);
 
