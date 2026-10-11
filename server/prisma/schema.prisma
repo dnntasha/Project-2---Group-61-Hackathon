@@ -33,9 +33,10 @@ model Group {
   adminId     Int
   maxTeamSize Int
 
-  admin   User          @relation("GroupAdmin", fields: [adminId], references: [id])
-  members GroupMember[]
-  teams   Team[]
+  admin    User          @relation("GroupAdmin", fields: [adminId], references: [id])
+  members  GroupMember[]
+  teams    Team[]
+  problems Problem[]
 }
 
 model GroupMember {
@@ -79,11 +80,13 @@ model TeamMember {
 
 model Problem {
   id              Int      @id @default(autoincrement())
+  groupId         Int
   title           String
   description     String
   submissionLimit Int      @default(5)
   createdAt       DateTime @default(now())
 
+  group       Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
   testCases   TestCase[]
   submissions Submission[]
 }
