@@ -6,7 +6,10 @@
  *  - A WebSocket endpoint at /ws for real-time collaborative code editing,
  *    running Python code and (eventually) submitting solutions.
  *
- * Collaboration model: each "room" holds an in-memory set of files. Clients
+ * Collaboration model: each "room" holds an in-memory file tree and the
+ * contents of its files. File/folder changes (create, rename, delete, move)
+ * are applied to the room's tree by the server and the new tree is sent to
+ * everyone in the room. Clients
  * send text operations (see lib/textOp.js) tagged with the file revision they
  * were based on. If other edits landed since that revision, the server
  * transforms the incoming operation over them (operational transformation),
@@ -23,6 +26,12 @@ import authRoutes from './routes/auth.js';
 import { authenticate } from './lib/sessions.js';
 import { runPython } from './lib/pythonRunner.js';
 import { applyOp, isValidOp, transform } from './lib/textOp.js';
+// The file-tree rules live next to the client's tree UI so both sides share them
+import {
+  applyTreeOperation,
+  createFileNode,
+  getFilePathsById,
+} from '../client/src/components/FileTree/fileTreeUtils.js';
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -35,7 +44,9 @@ if __name__ == "__main__":
     main()
 `;
 
-// roomId -> { clients: Set<WebSocket>, files: Map<filePath, file> }
+// roomId -> { clients: Set<WebSocket>, tree, files: Map<filePath, file> }
+//  - tree is the room's shared folder structure (see client fileTreeUtils.js);
+//    files holds the contents of exactly the file nodes in that tree
 // file = { code, revision, history, historyStart }
 //  - history[i] is the operation that produced revision historyStart + i + 1
 //  - only the most recent MAX_HISTORY operations are kept; a client whose base
@@ -100,6 +111,12 @@ function getRoom(roomId) {
   if (!room) {
     room = {
       clients: new Set(),
+      tree: {
+        id: 'root',
+        name: 'Code',
+        type: 'directory',
+        children: [createFileNode('main.py')],
+      },
       files: new Map([['main.py', newFile(defaultCode)]]),
     };
     rooms.set(roomId, room);
@@ -121,23 +138,12 @@ function sendSnapshot(ws, room) {
   );
   send(ws, {
     type: 'INIT_CODEBASE',
+    tree: room.tree,
     files,
     revisions: Object.fromEntries(
       [...room.files].map(([filePath, file]) => [filePath, file.revision])
     ),
   });
-}
-
-// Returns a file in the room, creating an empty one on first access.
-// Returns null if creating it would exceed the room's file limit.
-function getFile(room, filePath) {
-  let file = room.files.get(filePath);
-  if (!file) {
-    if (room.files.size >= MAX_FILES_PER_ROOM) return null;
-    file = newFile('');
-    room.files.set(filePath, file);
-  }
-  return file;
 }
 
 // Sends one file's authoritative contents and revision to one client
@@ -222,12 +228,9 @@ wss.on('connection', async (ws, req) => {
                 return;
               }
 
-              const file = getFile(room, data.filePath);
+              const file = room.files.get(data.filePath);
               if (!file) {
-                send(ws, {
-                  type: 'ERROR',
-                  error: 'The room has reached its file limit.',
-                });
+                send(ws, { type: 'ERROR', error: 'That file does not exist.' });
                 return;
               }
               sendFileSnapshot(ws, data.filePath, file);
@@ -247,12 +250,9 @@ wss.on('connection', async (ws, req) => {
                 return;
               }
 
-              const file = getFile(room, filePath);
+              const file = room.files.get(filePath);
               if (!file) {
-                send(ws, {
-                  type: 'ERROR',
-                  error: 'The room has reached its file limit.',
-                });
+                send(ws, { type: 'ERROR', error: 'That file does not exist.' });
                 return;
               }
 
@@ -308,6 +308,53 @@ wss.on('connection', async (ws, req) => {
                 filePath,
                 op: transformed,
                 revision: file.revision,
+              });
+              break;
+            }
+
+            // Client creates, renames, deletes or moves a file or folder. The
+            // server applies it to the room's tree, re-keys file contents to
+            // match, and sends the new tree to everyone (including the sender,
+            // who waits for it rather than updating optimistically).
+            case 'TREE_OPERATION': {
+              const result = applyTreeOperation(room.tree, data.operation);
+              if (result.error) {
+                send(ws, { type: 'ERROR', error: result.error });
+                return;
+              }
+
+              const oldPaths = getFilePathsById(room.tree);
+              const newPaths = getFilePathsById(result.tree);
+              if (
+                newPaths.size > MAX_FILES_PER_ROOM ||
+                [...newPaths.values()].some((path) => !isValidFilePath(path))
+              ) {
+                send(ws, {
+                  type: 'ERROR',
+                  error:
+                    'The room has reached its file limit or the path is too long.',
+                });
+                return;
+              }
+
+              // Carry each surviving file's contents to its new path; files
+              // that are gone (deleted, or inside a deleted folder) are dropped
+              const moved = [];
+              for (const [id, oldPath] of oldPaths) {
+                const file = room.files.get(oldPath);
+                room.files.delete(oldPath);
+                if (file && newPaths.has(id))
+                  moved.push([newPaths.get(id), file]);
+              }
+              for (const [path, file] of moved) room.files.set(path, file);
+              for (const [id, path] of newPaths) {
+                if (!oldPaths.has(id)) room.files.set(path, newFile(''));
+              }
+
+              room.tree = result.tree;
+              broadcastToRoom(room, null, {
+                type: 'TREE_UPDATE',
+                tree: room.tree,
               });
               break;
             }

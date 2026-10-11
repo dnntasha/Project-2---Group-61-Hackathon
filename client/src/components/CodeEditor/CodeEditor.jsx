@@ -9,6 +9,7 @@ import { useSearchParams } from 'react-router-dom';
 import FileTree from '../FileTree/FileTree.jsx';
 import { getToken } from '../../api.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
+import { getFilePathsById } from '../FileTree/fileTreeUtils.js';
 import {
   applyOp,
   compose,
@@ -71,6 +72,11 @@ function getRunOutput(message) {
  *    changes before it is applied, so nobody's typing is overwritten, and the
  *    caret is shifted so it stays where the user was working.
  *
+ * The file tree is shared the same way, but simpler: file/folder operations go
+ * to the server, which applies them and sends the whole tree back to everyone.
+ * When a tree update renames or moves a file, its sync state is carried over to
+ * the new path; if the open file was deleted another file is shown.
+ *
  * Props:
  *  - roomId:    room to join (falls back to ?roomId=, then the user's own room)
  *  - problemId: problem identifier sent to the server
@@ -86,6 +92,8 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   // main.py is open as soon as the editor loads
   const [activeFilePath, setActiveFilePath] = useState(DEFAULT_FILE);
   const [code, setCode] = useState('');
+  // The room's shared file tree (null until the server sends it)
+  const [tree, setTree] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [isFileLoading, setIsFileLoading] = useState(false);
@@ -101,6 +109,8 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   const activePathRef = useRef(activeFilePath);
   // filePath -> { revision, outstanding, buffer, text } (see above)
   const filesRef = useRef(new Map());
+  // The latest tree received, readable from message handlers
+  const treeRef = useRef(null);
   // Caret/selection to restore after a remote edit re-renders the textarea
   const pendingSelectionRef = useRef(null);
   const requestCounterRef = useRef(0);
@@ -217,6 +227,75 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
     [sendWsMessage]
   );
 
+  // Shows a file in the editor: straight away if we already hold it, otherwise
+  // after requesting it. An empty path means no file is open.
+  const showFile = useCallback(
+    (filePath) => {
+      activePathRef.current = filePath;
+      setActiveFilePath(filePath);
+      pendingSelectionRef.current = null;
+
+      const file = filesRef.current.get(filePath);
+      if (file) {
+        setCode(file.text);
+        setIsReady(true);
+        setIsFileLoading(false);
+        return;
+      }
+      setCode('');
+      setIsReady(false);
+      if (filePath) {
+        setIsFileLoading(true);
+        sendWsMessage({ type: 'SELECT_FILE', filePath });
+      } else {
+        setIsFileLoading(false);
+      }
+    },
+    [sendWsMessage]
+  );
+
+  // Adopts a new tree from the server. Files are keyed by path, so a rename or
+  // move would orphan their sync state: carry it across by node ID instead.
+  const applyTreeUpdate = useCallback(
+    (newTree) => {
+      const oldPaths = treeRef.current
+        ? getFilePathsById(treeRef.current)
+        : new Map();
+      const newPaths = getFilePathsById(newTree);
+      treeRef.current = newTree;
+      setTree(newTree);
+
+      const carried = new Map();
+      for (const [id, oldPath] of oldPaths) {
+        const file = filesRef.current.get(oldPath);
+        const newPath = newPaths.get(id);
+        if (!file || !newPath) continue;
+
+        // An edit still awaiting its ACK was sent to the old path, so the
+        // server never saw it; fold it back into what is waiting to be sent
+        if (file.outstanding) {
+          file.buffer = file.buffer
+            ? compose(file.outstanding, file.buffer)
+            : file.outstanding;
+          file.outstanding = null;
+        }
+        carried.set(newPath, file);
+      }
+      filesRef.current = carried;
+      for (const filePath of carried.keys()) flushFile(filePath);
+
+      // Follow the open file if it moved; fall back to another if it is gone
+      const activePath = activePathRef.current;
+      const activeId = [...oldPaths].find(
+        ([, path]) => path === activePath
+      )?.[0];
+      const nextPath = activeId ? newPaths.get(activeId) : undefined;
+      if (nextPath === activePath) return;
+      showFile(nextPath ?? newPaths.values().next().value ?? '');
+    },
+    [flushFile, showFile]
+  );
+
   // Applies a message from the server to local state
   const handleIncomingMessage = useCallback(
     (message) => {
@@ -225,20 +304,22 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
         // the room doesn't have it yet
         case 'INIT_CODEBASE': {
           filesRef.current = new Map();
+          treeRef.current = message.tree;
+          setTree(message.tree);
           for (const [filePath, text] of Object.entries(message.files || {})) {
             resetFile(filePath, text, message.revisions?.[filePath] ?? 0);
           }
+          // Open main.py, or whatever file is first if it was deleted
           if (!filesRef.current.has(activePathRef.current)) {
-            socketRef.current?.send(
-              JSON.stringify({
-                type: 'SELECT_FILE',
-                filePath: activePathRef.current,
-              })
-            );
-            setIsFileLoading(true);
+            showFile(filesRef.current.keys().next().value ?? '');
           }
           break;
         }
+
+        // The room's file tree changed (by us or another user)
+        case 'TREE_UPDATE':
+          applyTreeUpdate(message.tree);
+          break;
 
         // Authoritative copy of one file (response to SELECT_FILE, or sent
         // when the server couldn't reconcile our edit) - overwrites local text
@@ -281,7 +362,7 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
           break;
       }
     },
-    [applyRemoteEdit, flushFile, resetFile]
+    [applyRemoteEdit, applyTreeUpdate, flushFile, resetFile, showFile]
   );
 
   // Open the socket when the room/problem/url changes and close it on cleanup.
@@ -376,21 +457,13 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   // (the server's broadcasts keep them live); others are requested first.
   const handleSelectFile = (filePath) => {
     if (filePath === activePathRef.current) return;
-    activePathRef.current = filePath;
-    setActiveFilePath(filePath);
-    pendingSelectionRef.current = null;
+    showFile(filePath);
+  };
 
-    const file = filesRef.current.get(filePath);
-    if (file) {
-      setCode(file.text);
-      setIsReady(true);
-      setIsFileLoading(false);
-      return;
-    }
-    setCode('');
-    setIsReady(false);
-    setIsFileLoading(true);
-    sendWsMessage({ type: 'SELECT_FILE', filePath });
+  // Asks the server to create/rename/delete/move a file or folder; the change
+  // appears when the server's TREE_UPDATE comes back
+  const handleTreeOperation = (operation) => {
+    sendWsMessage({ type: 'TREE_OPERATION', operation });
   };
 
   // Python-friendly editing behaviour: Tab inserts 4 spaces, Backspace removes
@@ -512,13 +585,15 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
       <div className="editor-body">
         <aside className="editor-sidebar">
           <FileTree
+            tree={tree}
+            onOperation={handleTreeOperation}
             onSelectFile={handleSelectFile}
             selectedPath={activeFilePath}
           />
         </aside>
 
         <main className="editor-workspace">
-          <div className="active-tab">{activeFilePath}</div>
+          <div className="active-tab">{activeFilePath || 'No file open'}</div>
           <textarea
             ref={textareaRef}
             value={code}

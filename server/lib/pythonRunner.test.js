@@ -32,3 +32,26 @@ test('limits captured output', async () => {
   assert.equal(result.outputLimitExceeded, true);
   assert.ok(Buffer.byteLength(result.stdout) <= 64 * 1024);
 });
+
+test('does not expose the server environment to user code', async () => {
+  process.env.RUNNER_TEST_SECRET = 'top-secret';
+  try {
+    const result = await runPython(
+      'import os\nprint(os.environ.get("RUNNER_TEST_SECRET"))\n'
+    );
+
+    assert.equal(result.stdout.trim(), 'None');
+  } finally {
+    delete process.env.RUNNER_TEST_SECRET;
+  }
+});
+
+test('kills processes spawned by user code on timeout', async () => {
+  const result = await runPython(
+    'import subprocess, sys, time\n' +
+      'subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])\n' +
+      'time.sleep(10)\n'
+  );
+
+  assert.equal(result.timedOut, true);
+});
