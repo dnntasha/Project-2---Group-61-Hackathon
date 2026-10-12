@@ -143,6 +143,8 @@ export async function evaluateTestCase(temporaryDirectory, testCase) {
 
   if (execution.timedOut) {
     reason = 'Time limit exceeded.';
+  } else if (execution.outputExceeded) {
+    reason = 'Output limit exceeded.';
   } else if (execution.exitCode !== 0) {
     reason = 'Runtime error.';
   } else if (actualOutput !== expected) {

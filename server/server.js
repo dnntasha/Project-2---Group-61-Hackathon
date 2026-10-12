@@ -2,11 +2,11 @@ import express from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { requireAuth } from './middleware/auth.js';
-import { prisma } from './lib/prisma.js';
 
 import { executePython } from './execution/pythonExecutor.js';
 import authRoutes from './routes/auth.js';
 import { authenticate } from './lib/sessions.js';
+import { processSubmission } from './submission/submissionService.js';
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -55,54 +55,52 @@ app.post('/api/execute', async (req, res) => {
 });
 
 /**
- * Thando submission endpoint.
+ * Authenticated team submission endpoint.
  *
- * Current integration contract:
- * - codebase contains the project's file/directory tree.
- * - testCases contains the tests belonging to the selected problem.
- * - isLeader determines whether the user may submit.
- * - submissionsUsed/submissionLimit enforce the submission limit.
+ * The submission service:
+ * - Validates the codebase.
+ * - Checks team leadership and problem eligibility.
+ * - Atomically reserves an attempt.
+ * - Loads trusted test cases from the database.
+ * - Evaluates the submitted codebase.
+ * - Saves the final grading result.
  *
- * The shared application can later replace these request-body values with
- * authenticated team/problem/database state without changing the evaluator.
+ * IMPORTANT:
+ * Keep this endpoint disabled for untrusted users until
+ * the Docker deployment and remaining security checks pass.
  */
 app.post('/api/submit', requireAuth, async (req, res) => {
-  const { teamId } = req.body;
-
-  if (!Number.isInteger(teamId) || teamId <= 0) {
-    return res.status(400).json({
-      success: false,
-      error: 'A valid team ID is required.',
-    });
-  }
-
-  try {
-    const team = await prisma.team.findUnique({
-      where: { id: teamId },
-    });
-
-    if (!team) {
-      return res.status(404).json({
-        success: false,
-        error: 'Team not found.',
-      });
-    }
-
-    if (team.leaderId !== req.user.id) {
-      return res.status(403).json({
-        success: false,
-        error: 'Only the team leader may submit a solution.',
-      });
-    }
-
-    // Grading remains disabled until trusted problem test cases,
-    // submission limits and persistence are integrated.
+  if (process.env.ENABLE_SUBMISSION_GRADING !== 'true') {
     return res.status(503).json({
       success: false,
       error: 'Submission grading is not yet available.',
     });
+  }
+  const { teamId, problemId, codebase } = req.body;
+
+  if (
+    !Number.isInteger(teamId) ||
+    teamId <= 0 ||
+    !Number.isInteger(problemId) ||
+    problemId <= 0
+  ) {
+    return res.status(400).json({
+      success: false,
+      error: 'Valid team and problem IDs are required.',
+    });
+  }
+
+  try {
+    const result = await processSubmission({
+      userId: req.user.id,
+      teamId,
+      problemId,
+      codebase,
+    });
+
+    return res.status(result.status).json(result);
   } catch (error) {
-    console.error('Submission failed:', error);
+    console.error('Submission request failed:', error);
 
     return res.status(500).json({
       success: false,

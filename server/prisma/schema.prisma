@@ -106,8 +106,9 @@ model Submission {
   id        Int      @id @default(autoincrement())
   teamId    Int
   problemId Int
-  scoreP    Float
-  scoreT    Float
+  scoreP    Float?
+  scoreT    Float?
+  status    String   @default("PENDING")
   createdAt DateTime @default(now())
 
   team    Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
