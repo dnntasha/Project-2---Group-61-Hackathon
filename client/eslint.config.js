@@ -25,11 +25,13 @@ export default [
         clearTimeout: 'readonly',
         setInterval: 'readonly',
         clearInterval: 'readonly',
+        requestAnimationFrame: 'readonly',
         WebSocket: 'readonly',
         fetch: 'readonly',
         localStorage: 'readonly',
         URL: 'readonly',
         Event: 'readonly',
+        process: 'readonly',
       },
     },
     plugins: {

@@ -1,14 +1,10 @@
 import { useState } from 'react';
 import FileTreeNode from './FileTreeNode.jsx';
 import {
-  addNode,
-  createDirectoryNode,
+  applyTreeOperation,
   createFileNode,
-  deleteNode,
-  renameNode,
   getDirectories,
   isDescendant,
-  moveNode,
   findNode,
   hasDuplicateName,
   isValidNodeName,
@@ -17,30 +13,52 @@ import {
 import './FileTree.css';
 
 /**
- * FileTree owns the local representation of the project's file system.
+ * FileTree renders the project's file system and lets the user create, rename,
+ * delete and move files/directories.
  *
- * P4 responsibility:
- * - Render the recursive file/directory structure.
- * - Create, rename, delete and move files/directories locally.
+ * Shared mode (`tree` and `onOperation` props): the tree belongs to the server
+ * so every member of a room sees the same structure. User actions are
+ * validated here for quick feedback, then sent as operations through
+ * `onOperation`; the tree only changes when the server sends the result back.
  *
- * P3 integration:
- * - The tree currently lives in local React state.
- * - P3's WebSocket layer should synchronise these file operations between
- *   team members using the stable node IDs.
- * - Once shared state is connected, remote operations can update this tree
- *   through the same tree utility functions used by the local handlers.
+ * Local mode (no props): the tree lives in this component's state and
+ * operations are applied immediately with the same rules the server uses.
  *
  * Node format:
  * File:      { id, name, type: 'file', content }
  * Directory: { id, name, type: 'directory', children }
  */
-function FileTree() {
-  const [tree, setTree] = useState(() => ({
+function FileTree({
+  tree: sharedTree,
+  onOperation,
+  onSelectFile,
+  selectedPath,
+}) {
+  const isShared = Boolean(onOperation);
+  const [localTree, setLocalTree] = useState(() => ({
     id: 'root',
     name: 'Code',
     type: 'directory',
     children: [createFileNode('main.py')],
   }));
+  const tree = isShared ? sharedTree : localTree;
+
+  // Sends the operation to the server, or applies it locally
+  function dispatch(operation) {
+    if (isShared) {
+      onOperation(operation);
+      return;
+    }
+
+    const result = applyTreeOperation(localTree, operation);
+
+    if (result.error) {
+      window.alert(result.error);
+      return;
+    }
+
+    setLocalTree(result.tree);
+  }
 
   function handleCreateFile(parentId) {
     const name = window.prompt('Enter file name:');
@@ -61,9 +79,12 @@ function FileTree() {
       return;
     }
 
-    const newFile = createFileNode(trimmedName);
-
-    setTree((currentTree) => addNode(currentTree, parentId, newFile));
+    dispatch({
+      type: 'create',
+      parentId,
+      nodeType: 'file',
+      name: trimmedName,
+    });
   }
 
   // Creates a file inside the selected directory after validating its name
@@ -87,9 +108,12 @@ function FileTree() {
       return;
     }
 
-    const newDirectory = createDirectoryNode(trimmedName);
-
-    setTree((currentTree) => addNode(currentTree, parentId, newDirectory));
+    dispatch({
+      type: 'create',
+      parentId,
+      nodeType: 'directory',
+      name: trimmedName,
+    });
   }
 
   // Renames a node while excluding that node itself from duplicate-name checks.
@@ -114,7 +138,7 @@ function FileTree() {
       return;
     }
 
-    setTree((currentTree) => renameNode(currentTree, nodeId, trimmedName));
+    dispatch({ type: 'rename', nodeId, name: trimmedName });
   }
   // Removes a node and, for directories, its complete subtree after confirmation.
   function handleDelete(nodeId, nodeName) {
@@ -126,7 +150,7 @@ function FileTree() {
       return;
     }
 
-    setTree((currentTree) => deleteNode(currentTree, nodeId));
+    dispatch({ type: 'delete', nodeId });
   }
   // Moves a node to another directory.
   // Valid destinations exclude the node itself, its descendants and destinations
@@ -173,23 +197,32 @@ function FileTree() {
       return;
     }
 
-    setTree((currentTree) =>
-      moveNode(currentTree, nodeId, destinations[destinationIndex].id)
-    );
+    dispatch({
+      type: 'move',
+      nodeId,
+      destinationId: destinations[destinationIndex].id,
+    });
   }
 
   return (
     <aside className="file-tree">
       <h2>Files</h2>
 
-      <FileTreeNode
-        node={tree}
-        onCreateFile={handleCreateFile}
-        onCreateDirectory={handleCreateDirectory}
-        onRename={handleRename}
-        onDelete={handleDelete}
-        onMove={handleMove}
-      />
+      {!tree ? (
+        <p>Loading files...</p>
+      ) : (
+        <FileTreeNode
+          node={tree}
+          onCreateFile={handleCreateFile}
+          onCreateDirectory={handleCreateDirectory}
+          onRename={handleRename}
+          onDelete={handleDelete}
+          onMove={handleMove}
+          onSelectFile={onSelectFile} //adds functionality of selecting files
+          selectedPath={selectedPath} // highlights the open file
+          path=""
+        />
+      )}
     </aside>
   );
 }
