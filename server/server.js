@@ -6,6 +6,8 @@ import { executePython } from './execution/pythonExecutor.js';
 import { processSubmission } from './submission/submissionService.js';
 import authRoutes from './routes/auth.js';
 import teamRoutes from './routes/teams.js';
+import groupRoutes from './routes/groups.js';
+import leaderboardRoutes from './routes/leaderboards.js';
 import { authenticate } from './lib/sessions.js';
 
 const app = express();
@@ -21,6 +23,8 @@ app.get('/api/health', (req, res) => {
 // Authentication routes from the shared backend.
 app.use('/api/auth', authRoutes);
 app.use('/api/teams', teamRoutes);
+app.use('/api/groups', groupRoutes);
+app.use('/api/leaderboards', leaderboardRoutes);
 
 /**
  * Thando Python execution endpoint.

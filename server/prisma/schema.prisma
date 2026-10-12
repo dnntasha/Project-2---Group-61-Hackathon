@@ -19,6 +19,7 @@ model User {
   ledTeams         Team[]        @relation("TeamLeader")
   teamMemberships  TeamMember[]
   teamInvites      TeamInvite[]
+  groupInvites     GroupInvite[]
 }
 
 model Session {
@@ -37,6 +38,7 @@ model Group {
   admin   User          @relation("GroupAdmin", fields: [adminId], references: [id])
   members GroupMember[]
   teams   Team[]
+  invites GroupInvite[]
 }
 
 model GroupMember {
@@ -88,4 +90,16 @@ model TeamInvite {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([teamId, userId])
+}
+
+model GroupInvite {
+  id        Int      @id @default(autoincrement())
+  groupId   Int
+  userId    Int
+  createdAt DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
 }
