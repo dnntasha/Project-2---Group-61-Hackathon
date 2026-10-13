@@ -12,6 +12,7 @@ import {
   requireGroupMember,
   requireNotStarted,
 } from '../middleware/groups.js';
+import { getEndsAt, getEnventStatus } from '../lib/eventTime.js';
 
 // Icons are saved in server/uploads/icons and served at /api/uploads/icons.
 export const ICON_DIR = fileURLToPath(
