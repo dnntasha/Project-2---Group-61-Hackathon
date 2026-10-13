@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import GroupIcon from '../components/GroupIcon.jsx';
+import GroupMembers from '../components/GroupMembers.jsx';
+import Countdown from '../components.Countdown.jsx';
 import './Groups.css';
+
+const STATUS_TEXT = {
+  'not-started': 'Not started yet',
+  running: 'Event in progress',
+  ended: 'Event ended',
+};
 
 const FIELDS = [
   { key: 'durationMin', label: 'Event duration (minutes)', min: 10, max: 1440 },
@@ -37,10 +45,21 @@ export default function GroupPage({ groupId, onBack }) {
               <h1>{group.name}</h1>
               <p className="muted">
                 {group.isAdmin ? 'You are the admin' : 'Member'} ·{' '}
-                {group.startedAt ? 'Event in progress' : 'Not started yet'}
+                {STATUS_TEXT[group.startedAt]}
               </p>
             </div>
+            {group.status === 'running' && (
+              <Countdown
+                endsAt={group.endsAt}
+                serverTime={group.serverTime}
+                onEnd={() => setGroup((g) => ({ ...g, status: 'ended' }))}
+              />
+            )}
           </header>
+
+          {group.isAdmin && group.status === 'not-started' && (
+            <StartEvent group={group} onStarted={setGroup} />
+          )}
 
           {group.isAdmin ? (
             <>
@@ -50,9 +69,53 @@ export default function GroupPage({ groupId, onBack }) {
           ) : (
             <SettingsSummary group={group} />
           )}
+
+          <GroupMembers group={group} />
         </>
       )}
     </section>
+  );
+}
+
+function StartEvent({ group, onStarted }) {
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function handleStart() {
+    const ok = window.confirm(
+      `Start "${group.name}" now? Teams lock and problems are revealed, this cannot be undone.`
+    );
+    if (!ok) return;
+
+    setError('');
+    setBusy(true);
+    try {
+      const data = await api(`/groups/${group.id}/start`, { method: 'POST' });
+      onStarted(data.group);
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="panel panel-start">
+      <div>
+        <h2>Start the event</h2>
+        <p className="form-hint">
+          Runs for {group.durationMin} minutes. Teams lock and problems become
+          visible.
+        </p>
+      </div>
+      <button className="btn-primary" onClick={handleStart} disabled={busy}>
+        {busy ? 'Starting…' : 'Start event'}
+      </button>
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 
