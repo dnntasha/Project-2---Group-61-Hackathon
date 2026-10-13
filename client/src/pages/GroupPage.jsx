@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import GroupIcon from '../components/GroupIcon.jsx';
-import GroupMembers from '../components/GroupMembers.jsx';
 import Countdown from '../components.Countdown.jsx';
 import './Groups.css';
 
@@ -69,8 +68,6 @@ export default function GroupPage({ groupId, onBack }) {
           ) : (
             <SettingsSummary group={group} />
           )}
-
-          <GroupMembers group={group} />
         </>
       )}
     </section>
