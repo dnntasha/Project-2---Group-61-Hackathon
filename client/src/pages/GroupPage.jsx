@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import GroupIcon from '../components/GroupIcon.jsx';
-import Countdown from '../components.Countdown.jsx';
+import Countdown from '../components/Countdown.jsx';
 import './Groups.css';
 
 const STATUS_TEXT = {
@@ -44,7 +44,7 @@ export default function GroupPage({ groupId, onBack }) {
               <h1>{group.name}</h1>
               <p className="muted">
                 {group.isAdmin ? 'You are the admin' : 'Member'} ·{' '}
-                {STATUS_TEXT[group.startedAt]}
+                {STATUS_TEXT[group.status]}
               </p>
             </div>
             {group.status === 'running' && (
