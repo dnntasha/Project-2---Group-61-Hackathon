@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import GroupIcon from '../components/GroupIcon.jsx';
-import InviteList from '../components/InviteList.jsx';
 import './Groups.css';
 
 // Lists the user's groups and lets them create a new one.
@@ -34,8 +33,6 @@ export default function GroupsPage({ onOpen }) {
   return (
     <section className="groups page-enter">
       <h1>Your groups</h1>
-
-      <InviteList onAccepted={onOpen} />
 
       <form className="group-create" onSubmit={handleCreate}>
         <label htmlFor="group-name">Create a group</label>
