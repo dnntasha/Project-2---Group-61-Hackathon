@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api, getToken, isIdleTooLong, markActivity } from '../api.js';
 
 const AuthContext = createContext(null);
@@ -8,26 +9,33 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(Boolean(getToken()));
   const [expired, setExpired] = useState(false);
 
-  //allows the users to restore the session if the token ins valid.
+  // Call useNavigate at the top level of the component
+  const navigate = useNavigate();
+
+  // Restore session
   useEffect(() => {
-    if (!getToken()) return;
+    if (!getToken()) {
+      setLoading(false);
+      return;
+    }
     api('/auth/me')
       .then((data) => setUser(data.user))
       .catch(() => localStorage.removeItem('token'))
       .finally(() => setLoading(false));
   }, []);
 
-  // An expired token signs the user out
+  // Handle token expiration event
   useEffect(() => {
     const onExpired = () => {
       setUser(null);
       setExpired(true);
+      navigate('/login');
     };
     window.addEventListener('auth:expired', onExpired);
     return () => window.removeEventListener('auth:expired', onExpired);
-  }, []);
+  }, [navigate]);
 
-  //user must be signed out if the have been inactive for 30 mins
+  // Handle inactivity timeout (30 mins)
   useEffect(() => {
     if (!user) return;
     const timer = setInterval(() => {
@@ -35,12 +43,13 @@ export function AuthProvider({ children }) {
         localStorage.removeItem('token');
         setUser(null);
         setExpired(true);
+        navigate('/login');
       }
     }, 30 * 1000);
     return () => clearInterval(timer);
-  }, [user]);
+  }, [user, navigate]);
 
-  //either login ot register mode
+  // Login or Register
   async function signIn(mode, username, password) {
     const data = await api(`/auth/${mode}`, {
       method: 'POST',
@@ -50,12 +59,16 @@ export function AuthProvider({ children }) {
     markActivity();
     setExpired(false);
     setUser(data.user);
+
+    // Redirect to profile after successful sign-in
+    navigate('/profile');
   }
 
   async function signOut() {
     await api('/auth/logout', { method: 'POST' }).catch(() => {});
     localStorage.removeItem('token');
     setUser(null);
+    navigate('/login');
   }
 
   return (

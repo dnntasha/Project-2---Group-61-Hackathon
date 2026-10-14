@@ -1,157 +1,65 @@
-import { spawn } from 'child_process';
-import { setTimeout, clearTimeout } from 'node:timers';
-import { performance } from 'node:perf_hooks';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { executeDockerPythonFile } from './dockerSandbox.js';
 
 const DEFAULT_TIMEOUT_MS = 5000;
+const MAX_CODE_BYTES = 256 * 1024;
+const MAX_STDIN_BYTES = 64 * 1024;
 
 /**
- * Executes Python source code directly using a child process.
- *
- * Used by the /api/execute route for normal code execution rather than
- * submission evaluation.
- *
- * Supports:
- * - stdin input
- * - stdout/stderr capture
- * - configurable execution timeout
- * - exit-code reporting
- * - execution runtime measurement
- *
- * A timed-out process is terminated with SIGKILL.
+ * Execute Python source code inside the Docker sandbox.
+ * Execution is disabled by default.
  */
-export function executePython(
+export async function executePython(
   code,
   stdin = '',
   timeoutMs = DEFAULT_TIMEOUT_MS
 ) {
-  return new Promise((resolve, reject) => {
-    const startTime = performance.now();
-    const pythonProcess = spawn('python3', ['-c', code]);
+  if (process.env.ENABLE_PYTHON_EXECUTION !== 'true') {
+    throw new Error('Python execution is disabled.');
+  }
 
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    let settled = false;
+  if (
+    typeof code !== 'string' ||
+    Buffer.byteLength(code, 'utf8') > MAX_CODE_BYTES
+  ) {
+    throw new Error('Invalid Python source code.');
+  }
 
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      pythonProcess.kill('SIGKILL');
-    }, timeoutMs);
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'cs343-execute-'));
 
-    pythonProcess.stdout.on('data', (data) => {
-      stdout += data.toString();
+  try {
+    await writeFile(path.join(directory, 'main.py'), code, {
+      encoding: 'utf8',
+      mode: 0o600,
     });
 
-    pythonProcess.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    pythonProcess.on('error', (error) => {
-      clearTimeout(timeout);
-
-      if (!settled) {
-        settled = true;
-        reject(error);
-      }
-    });
-
-    pythonProcess.on('close', (exitCode) => {
-      clearTimeout(timeout);
-
-      const runtimeMs = performance.now() - startTime;
-
-      if (!settled) {
-        settled = true;
-
-        resolve({
-          stdout,
-          stderr,
-          exitCode,
-          timedOut,
-          runtimeMs,
-        });
-      }
-    });
-
-    if (stdin) {
-      pythonProcess.stdin.write(stdin);
-    }
-
-    pythonProcess.stdin.end();
-  });
+    return await executePythonFile('main.py', stdin, timeoutMs, directory);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 /**
- * Executes a Python file from an existing codebase directory.
- *
- * This is used by the submission evaluator after the submitted file tree has
- * been reconstructed inside a temporary directory. The cwd parameter allows
- * imports between files in the submitted project to work normally.
- *
- * Returns the same execution metadata as executePython().
+ * Execute a Python file from an existing project directory.
  */
-export function executePythonFile(
+export async function executePythonFile(
   filePath,
   stdin = '',
   timeoutMs = DEFAULT_TIMEOUT_MS,
   cwd
 ) {
-  return new Promise((resolve, reject) => {
-    const startTime = performance.now();
+  if (process.env.ENABLE_PYTHON_EXECUTION !== 'true') {
+    throw new Error('Python execution is disabled.');
+  }
 
-    const pythonProcess = spawn('python3', [filePath], {
-      cwd,
-    });
+  if (
+    typeof stdin !== 'string' ||
+    Buffer.byteLength(stdin, 'utf8') > MAX_STDIN_BYTES
+  ) {
+    throw new Error('Invalid Python input.');
+  }
 
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    let settled = false;
-
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      pythonProcess.kill('SIGKILL');
-    }, timeoutMs);
-
-    pythonProcess.stdout.on('data', (data) => {
-      stdout += data.toString();
-    });
-
-    pythonProcess.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    pythonProcess.on('error', (error) => {
-      clearTimeout(timeout);
-
-      if (!settled) {
-        settled = true;
-        reject(error);
-      }
-    });
-
-    pythonProcess.on('close', (exitCode) => {
-      clearTimeout(timeout);
-
-      const runtimeMs = performance.now() - startTime;
-
-      if (!settled) {
-        settled = true;
-
-        resolve({
-          stdout,
-          stderr,
-          exitCode,
-          timedOut,
-          runtimeMs,
-        });
-      }
-    });
-
-    if (stdin) {
-      pythonProcess.stdin.write(stdin);
-    }
-
-    pythonProcess.stdin.end();
-  });
+  return executeDockerPythonFile(filePath, stdin, timeoutMs, cwd);
 }

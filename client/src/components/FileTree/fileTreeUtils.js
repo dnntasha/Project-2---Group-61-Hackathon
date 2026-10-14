@@ -233,3 +233,148 @@ export function findParentNode(tree, nodeId) {
 
   return null;
 }
+
+/**
+ * Returns a Map of file node ID -> slash-separated path from the root
+ * (e.g. 'src/main.py'). Files are addressed by path for editing, so this is
+ * how a rename/move is traced back to the file it affected.
+ */
+export function getFilePathsById(tree, prefix = '', paths = new Map()) {
+  if (tree.type !== 'directory') {
+    return paths;
+  }
+
+  for (const child of tree.children) {
+    const childPath = prefix ? `${prefix}/${child.name}` : child.name;
+
+    if (child.type === 'directory') {
+      getFilePathsById(child, childPath, paths);
+    } else {
+      paths.set(child.id, childPath);
+    }
+  }
+
+  return paths;
+}
+
+const MAX_NODE_NAME_LENGTH = 128;
+
+// Returns an error message when `name` can't be used for a node in the given
+// directory, or null when it can. excludeNodeId is the node being renamed/moved.
+function getNameError(tree, parentId, name, excludeNodeId = null) {
+  if (
+    !isValidNodeName(name) ||
+    name === '.' ||
+    name === '..' ||
+    name.length > MAX_NODE_NAME_LENGTH
+  ) {
+    return 'Please enter a valid name.';
+  }
+
+  if (hasDuplicateName(tree, parentId, name, excludeNodeId)) {
+    return 'A file or folder with that name already exists.';
+  }
+
+  return null;
+}
+
+/**
+ * Applies one file-tree operation and returns { tree } or { error }.
+ *
+ * This is the single definition of what a valid operation is: the server uses
+ * it to update a room's shared tree, and FileTree uses it directly when it has
+ * no server to sync with. Operations:
+ *   { type: 'create', parentId, nodeType: 'file' | 'directory', name }
+ *   { type: 'rename', nodeId, name }
+ *   { type: 'delete', nodeId }
+ *   { type: 'move', nodeId, destinationId }
+ */
+export function applyTreeOperation(tree, operation) {
+  if (!operation || typeof operation !== 'object') {
+    return { error: 'Invalid file operation.' };
+  }
+
+  const name =
+    typeof operation.name === 'string' ? operation.name.trim() : operation.name;
+
+  switch (operation.type) {
+    case 'create': {
+      const parent = findNode(tree, operation.parentId);
+
+      if (!parent || parent.type !== 'directory') {
+        return { error: 'The destination folder no longer exists.' };
+      }
+
+      const nameError = getNameError(tree, parent.id, name);
+
+      if (nameError) {
+        return { error: nameError };
+      }
+
+      if (operation.nodeType !== 'file' && operation.nodeType !== 'directory') {
+        return { error: 'Invalid file operation.' };
+      }
+
+      const node =
+        operation.nodeType === 'file'
+          ? createFileNode(name)
+          : createDirectoryNode(name);
+
+      return { tree: addNode(tree, parent.id, node) };
+    }
+
+    case 'rename': {
+      if (!findNode(tree, operation.nodeId)) {
+        return { error: 'That file or folder no longer exists.' };
+      }
+
+      const parent = findParentNode(tree, operation.nodeId);
+      const nameError = parent
+        ? getNameError(tree, parent.id, name, operation.nodeId)
+        : getNameError(tree, null, name);
+
+      if (nameError) {
+        return { error: nameError };
+      }
+
+      return { tree: renameNode(tree, operation.nodeId, name) };
+    }
+
+    case 'delete': {
+      if (operation.nodeId === 'root' || !findNode(tree, operation.nodeId)) {
+        return { error: 'That file or folder no longer exists.' };
+      }
+
+      return { tree: deleteNode(tree, operation.nodeId) };
+    }
+
+    case 'move': {
+      const node = findNode(tree, operation.nodeId);
+      const destination = findNode(tree, operation.destinationId);
+
+      if (operation.nodeId === 'root' || !node) {
+        return { error: 'That file or folder no longer exists.' };
+      }
+
+      if (
+        !destination ||
+        destination.type !== 'directory' ||
+        destination.id === node.id ||
+        isDescendant(node, destination.id)
+      ) {
+        return { error: 'That is not a valid destination folder.' };
+      }
+
+      const nameError = getNameError(tree, destination.id, node.name, node.id);
+
+      if (nameError) {
+        return { error: nameError };
+      }
+
+      return { tree: moveNode(tree, node.id, destination.id) };
+    }
+
+    default:
+      return { error: 'Invalid file operation.' };
+  }
+}
