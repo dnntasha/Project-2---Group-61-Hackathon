@@ -82,7 +82,7 @@ function validateName(name) {
   return null;
 }
 
-// POST /api/groups { name } – the creator becomes the admin.
+// POST /api/groups { name } - the creator becomes the admin.
 router.post(
   '/',
   wrap(async (req, res) => {
@@ -105,7 +105,7 @@ router.post(
   })
 );
 
-// GET /api/groups – groups the user runs or belongs to.
+// GET /api/groups - groups the user runs or belongs to.
 router.get(
   '/',
   wrap(async (req, res) => {
@@ -156,7 +156,7 @@ router.patch(
   })
 );
 
-// POST /api/groups/:groupId/icon – multipart form with an "icon" file field.
+// POST /api/groups/:groupId/icon - multipart form with an "icon" file field.
 router.post(
   '/:groupId/icon',
   requireGroupMember,
@@ -191,13 +191,30 @@ router.post(
     });
   }
 );
-// Send a group invite for admin to start eh event
+
+//POST /api/groups/:groupId/start - admin starts the event
 router.post(
   '/:groupId/start',
   requireGroupMember,
   requireGroupAdmin,
   requireNotStarted,
   wrap(async (req, res) => {
+    // An event with no problems can't be competed in, and topK is the number of
+    // problem scores that count, so it can't exceed how many problems there are.
+    const problemCount = await prisma.problem.count({
+      where: { groupId: req.group.id },
+    });
+    if (problemCount === 0) {
+      return res
+        .status(409)
+        .json({ error: 'Add at least one problem before starting the event.' });
+    }
+    if (req.group.topK > problemCount) {
+      return res.status(409).json({
+        error: `Scored problems (${req.group.topK}) cannot be more than the ${problemCount} problem(s) you have defined.`,
+      });
+    }
+
     // Only update if it still hasn't started, so a double-click can't move the start time.
     const { count } = await prisma.group.updateMany({
       where: { id: req.group.id, startedAt: null },
@@ -211,6 +228,56 @@ router.post(
       where: { id: req.group.id },
     });
     res.json({ group: toClient(group, true) });
+  })
+);
+
+// Send a group invite for admin to start eh event
+router.post(
+  '/:groupId/invites',
+  requireGroupMember,
+  requireGroupAdmin,
+  requireNotStarted,
+  wrap(async (req, res) => {
+    const userId = Number(req.body?.userId);
+    if (!Number.isInteger(userId)) {
+      return res.status(400).json({ error: 'A user must be selected.' });
+    }
+
+    const groupId = req.group.id;
+
+    if (userId === req.group.adminId) {
+      return res
+        .status(400)
+        .json({ error: 'You are already the admin of this group.' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res.status(404).json({ error: 'That user does not exist.' });
+    }
+
+    const existingMember = await prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId } },
+    });
+    if (existingMember) {
+      return res
+        .status(409)
+        .json({ error: 'This user is already a member of the group.' });
+    }
+
+    const existingInvite = await prisma.groupInvite.findUnique({
+      where: { groupId_userId: { groupId, userId } },
+    });
+    if (existingInvite) {
+      return res
+        .status(409)
+        .json({ error: 'This user already has an invitation to the group.' });
+    }
+
+    const invite = await prisma.groupInvite.create({
+      data: { groupId, userId },
+    });
+    res.status(201).json(invite);
   })
 );
 
