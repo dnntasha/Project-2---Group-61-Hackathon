@@ -42,7 +42,7 @@ import {
   getFilePathsById,
 } from '../client/src/components/FileTree/fileTreeUtils.js';
 import groupRoutes, { ICON_DIR } from './routes/groups.js';
-import problemRoutes from './routes/problem.js';
+import problemRoutes from './routes/problems.js';
 
 const app = express();
 const port = process.env.PORT || 5001;
