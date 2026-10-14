@@ -12,7 +12,7 @@ import {
   requireGroupMember,
   requireNotStarted,
 } from '../middleware/groups.js';
-import { getEndsAt, getEnventStatus } from '../lib/eventTime.js';
+import { getEndsAt, getEventStatus } from '../lib/eventTime.js';
 
 // Icons are saved in server/uploads/icons and served at /api/uploads/icons.
 export const ICON_DIR = fileURLToPath(
@@ -67,6 +67,9 @@ function toClient(group, isAdmin) {
     maxTeamSize: group.maxTeamSize,
     topK: group.topK,
     startedAt: group.startedAt,
+    endsAt: getEndsAt(group),
+    status: getEventStatus(group),
+    serverTime: new Date(),
   };
 }
 
@@ -188,78 +191,28 @@ router.post(
     });
   }
 );
-// Send a group invite
-router.post('/:groupId/invites', requireAuth, async (req, res, next) => {
-  try {
-    const groupId = Number(req.params.groupId);
-    const { userId } = req.body;
-
-    if (!userId) {
-      return res.status(400).json({
-        error: 'A user must be selected.',
-      });
+// Send a group invite for admin to start eh event
+router.post(
+  '/:groupId/start',
+  requireGroupMember,
+  requireGroupAdmin,
+  requireNotStarted,
+  wrap(async (req, res) => {
+    // Only update if it still hasn't started, so a double-click can't move the start time.
+    const { count } = await prisma.group.updateMany({
+      where: { id: req.group.id, startedAt: null },
+      data: { startedAt: new Date() },
+    });
+    if (count === 0) {
+      return res.status(409).json({ error: 'The event has already started.' });
     }
 
     const group = await prisma.group.findUnique({
-      where: {
-        id: groupId,
-      },
+      where: { id: req.group.id },
     });
-
-    if (!group) {
-      return res.status(404).json({
-        error: 'Group not found.',
-      });
-    }
-
-    if (group.adminId !== req.user.id) {
-      return res.status(403).json({
-        error: 'Only the group administrator can send invitations.',
-      });
-    }
-
-    const existingMember = await prisma.groupMember.findUnique({
-      where: {
-        groupId_userId: {
-          groupId,
-          userId,
-        },
-      },
-    });
-
-    if (existingMember) {
-      return res.status(409).json({
-        error: 'This user is already a member of the group.',
-      });
-    }
-
-    const existingInvite = await prisma.groupInvite.findUnique({
-      where: {
-        groupId_userId: {
-          groupId,
-          userId,
-        },
-      },
-    });
-
-    if (existingInvite) {
-      return res.status(409).json({
-        error: 'This user already has an invitation to the group.',
-      });
-    }
-
-    const invite = await prisma.groupInvite.create({
-      data: {
-        groupId,
-        userId,
-      },
-    });
-
-    return res.status(201).json(invite);
-  } catch (err) {
-    next(err);
-  }
-});
+    res.json({ group: toClient(group, true) });
+  })
+);
 
 // Accept group invite
 router.post(
