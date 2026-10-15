@@ -7,11 +7,18 @@
  * SKIP_DOCKER_CHECK=1 skips everything.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  writeFileSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+// Same image and container restrictions the server uses
+import { IMAGE, sandboxArgs } from '../server/execution/dockerSandbox.js';
 
-const IMAGE = 'python:3.12-slim';
 const setup = process.argv.includes('--setup');
 
 if (process.env.SKIP_DOCKER_CHECK === '1') {
@@ -42,15 +49,22 @@ if (!daemonUp()) {
 
   console.log('[docker] Daemon not running, trying to start it...');
   if (process.platform === 'win32') {
-    const exe = path.join(
-      process.env.ProgramFiles ?? 'C:\\Program Files',
-      'Docker',
-      'Docker',
-      'Docker Desktop.exe'
-    );
+    const programFiles = process.env.ProgramFiles ?? 'C:\\Program Files';
+    const localAppData = process.env.LOCALAPPDATA ?? '';
+    // Docker Desktop or Rancher Desktop, whichever is installed
+    const exe = [
+      path.join(programFiles, 'Docker', 'Docker', 'Docker Desktop.exe'),
+      path.join(programFiles, 'Rancher Desktop', 'Rancher Desktop.exe'),
+      path.join(localAppData, 'Programs', 'Rancher Desktop', 'Rancher Desktop.exe'),
+    ].find((candidate) => existsSync(candidate));
+    if (!exe) {
+      fail('Docker Desktop / Rancher Desktop not found. Start Docker manually.');
+    }
     spawnSync('cmd', ['/c', 'start', '', exe], { stdio: 'ignore' });
   } else if (process.platform === 'darwin') {
-    spawnSync('open', ['-a', 'Docker'], { stdio: 'ignore' });
+    if (spawnSync('open', ['-a', 'Docker'], { stdio: 'ignore' }).status !== 0) {
+      spawnSync('open', ['-a', 'Rancher Desktop'], { stdio: 'ignore' });
+    }
   } else {
     spawnSync('systemctl', ['start', 'docker'], { stdio: 'inherit' });
   }
@@ -74,23 +88,10 @@ if (docker(['image', 'inspect', IMAGE]).status !== 0) {
 const dir = mkdtempSync(path.join(tmpdir(), 'cs343-check-'));
 try {
   writeFileSync(path.join(dir, 'main.py'), 'print("sandbox-ok")\n');
-  const run = docker([
-    'run',
-    '--rm',
-    '--network',
-    'none',
-    '--memory',
-    '128m',
-    '--read-only',
-    '--cap-drop',
-    'ALL',
-    '--mount',
-    `type=bind,src=${dir},dst=/app,readonly`,
-    IMAGE,
-    'python',
-    '-B',
-    '/app/main.py',
-  ]);
+  // The sandbox user is unprivileged, so the files must be world-readable
+  chmodSync(dir, 0o755);
+  chmodSync(path.join(dir, 'main.py'), 0o644);
+  const run = docker(['run', '--rm', ...sandboxArgs(dir)]);
   if (run.status !== 0 || !run.stdout.includes('sandbox-ok')) {
     fail(`Sandbox test failed:\n${run.stderr || run.stdout}`);
   }

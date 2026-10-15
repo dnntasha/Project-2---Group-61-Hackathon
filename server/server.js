@@ -25,6 +25,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { requireAuth } from './middleware/auth.js';
 
 import { executePython } from './execution/pythonExecutor.js';
+import { removeOrphanedContainers } from './execution/dockerSandbox.js';
 import authRoutes from './routes/auth.js';
 import teamRoutes from './routes/teams.js';
 import leaderboardRoutes from './routes/leaderboards.js';
@@ -710,4 +711,15 @@ wss.on('connection', async (ws, req) => {
 server.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
   console.log(`WebSocket server running on ws://localhost:${port}/ws`);
+
+  // Sandbox containers from a previous run that was stopped mid-execution
+  if (
+    process.env.ENABLE_PYTHON_EXECUTION === 'true' ||
+    process.env.ENABLE_SUBMISSION_GRADING === 'true'
+  ) {
+    removeOrphanedContainers().then((removed) => {
+      if (removed)
+        console.log(`Removed ${removed} leftover sandbox containers.`);
+    });
+  }
 });

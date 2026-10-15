@@ -116,6 +116,18 @@ export async function validatePythonEntryPoint(temporaryDirectory) {
 }
 
 /**
+ * Output is compared ignoring Windows line endings and trailing whitespace
+ * on each line, which test authors and programs often disagree on.
+ */
+export function normaliseOutput(text) {
+  return String(text ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .join('\n')
+    .trimEnd();
+}
+
+/**
  * Executes main.py for one test case using the test input and time limit.
  *
  * A test fails when execution times out, Python exits with an error, or the
@@ -136,8 +148,8 @@ export async function evaluateTestCase(temporaryDirectory, testCase) {
     temporaryDirectory
   );
 
-  const actualOutput = execution.stdout.trimEnd();
-  const expected = expectedOutput.trimEnd();
+  const actualOutput = normaliseOutput(execution.stdout);
+  const expected = normaliseOutput(expectedOutput);
 
   let reason = null;
 
