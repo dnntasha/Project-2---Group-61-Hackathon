@@ -44,12 +44,14 @@ export default function LoginPage() {
     <main className="auth">
       <div className="auth-panel">
         <p className="auth-brand">The Hackathon</p>
-        <h1>{isLogin ? 'Sign in' : 'Create an account'}</h1>
-        <p className="auth-lead">
-          {isLogin
-            ? 'Sign in to see the groups, teams and problems.'
-            : 'Create a username to join a group.'}
-        </p>
+        <div key={mode} className="auth-intro">
+          <h1>{isLogin ? 'Sign in' : 'Create an account'}</h1>
+          <p className="auth-lead">
+            {isLogin
+              ? 'Sign in to see the groups, teams and problems.'
+              : 'Create a username to join a group.'}
+          </p>
+        </div>
 
         {expired && isLogin && (
           <p className="auth-notice" role="status">
@@ -105,7 +107,9 @@ export default function LoginPage() {
             type="submit"
             disabled={busy || !username || !password}
           >
-            {busy ? 'Please wait…' : isLogin ? 'Sign in' : 'Create account'}
+            <span key={busy ? 'busy' : mode}>
+              {busy ? 'Please wait…' : isLogin ? 'Sign in' : 'Create account'}
+            </span>
           </button>
         </form>
 

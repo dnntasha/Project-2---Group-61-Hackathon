@@ -1,82 +1,374 @@
 import { Router } from 'express';
-import { PrismaClient } from '@prisma/client';
+import multer from 'multer';
+import { mkdirSync } from 'node:fs';
+import { unlink } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
+import {
+  requireGroupAdmin,
+  requireGroupMember,
+  requireNotStarted,
+} from '../middleware/groups.js';
+import { getEndsAt, getEventStatus } from '../lib/eventTime.js';
+
+// Icons are saved in server/uploads/icons and served at /api/uploads/icons.
+export const ICON_DIR = fileURLToPath(
+  new URL('../uploads/icons', import.meta.url)
+);
+mkdirSync(ICON_DIR, { recursive: true });
+
+// Allowed image types and the extension each is saved with.
+// SVG is left out on purpose: it can contain scripts.
+const IMAGE_TYPES = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+};
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: ICON_DIR,
+    // Random name, so users can't overwrite each other's files or guess names.
+    filename: (req, file, cb) =>
+      cb(null, randomUUID() + IMAGE_TYPES[file.mimetype]),
+  }),
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
+  fileFilter: (req, file, cb) => {
+    if (IMAGE_TYPES[file.mimetype]) return cb(null, true);
+    cb(new Error('The icon must be a PNG, JPEG, GIF or WebP image.'));
+  },
+});
+
+const LIMITS = {
+  durationMin: { min: 10, max: 1440, label: 'Duration' },
+  maxTeamSize: { min: 1, max: 10, label: 'Maximum team size' },
+  topK: { min: 1, max: 50, label: 'Number of scored problems' },
+};
 
 const router = Router();
-const prisma = new PrismaClient();
+router.use(requireAuth); // every group route needs a signed-in user
 
-// Send a group invite
-router.post('/:groupId/invites', requireAuth, async (req, res, next) => {
-  try {
-    const groupId = Number(req.params.groupId);
-    const { userId } = req.body;
+// Express 4 doesn't catch errors in async handlers, so pass them to next().
+const wrap = (handler) => (req, res, next) =>
+  Promise.resolve(handler(req, res, next)).catch(next);
 
-    if (!userId) {
-      return res.status(400).json({
-        error: 'A user must be selected.',
+// The shape of a group sent to the client.
+function toClient(group, isAdmin) {
+  return {
+    id: group.id,
+    name: group.name,
+    iconUrl: group.iconFile ? `/api/uploads/icons/${group.iconFile}` : null,
+    isAdmin,
+    durationMin: group.durationMin,
+    maxTeamSize: group.maxTeamSize,
+    topK: group.topK,
+    startedAt: group.startedAt,
+    endsAt: getEndsAt(group),
+    status: getEventStatus(group),
+    serverTime: new Date(),
+  };
+}
+
+function validateName(name) {
+  if (typeof name !== 'string') return 'Enter a group name.';
+  const trimmed = name.trim();
+  if (trimmed.length < 3 || trimmed.length > 40) {
+    return 'The group name must be 3–40 characters.';
+  }
+  return null;
+}
+
+// POST /api/groups { name } - the creator becomes the admin.
+router.post(
+  '/',
+  wrap(async (req, res) => {
+    const error = validateName(req.body?.name);
+    if (error) return res.status(400).json({ error });
+
+    try {
+      const group = await prisma.group.create({
+        data: { name: req.body.name.trim(), adminId: req.user.id },
       });
+      res.status(201).json({ group: toClient(group, true) });
+    } catch (err) {
+      if (err.code === 'P2002') {
+        return res
+          .status(409)
+          .json({ error: 'A group with that name already exists.' });
+      }
+      throw err;
+    }
+  })
+);
+
+// GET /api/groups - groups the user runs or belongs to.
+router.get(
+  '/',
+  wrap(async (req, res) => {
+    const groups = await prisma.group.findMany({
+      where: {
+        OR: [
+          { adminId: req.user.id },
+          { members: { some: { userId: req.user.id } } },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({
+      groups: groups.map((g) => toClient(g, g.adminId === req.user.id)),
+    });
+  })
+);
+
+// GET /api/groups/:groupId
+router.get('/:groupId', requireGroupMember, (req, res) => {
+  res.json({ group: toClient(req.group, req.isGroupAdmin) });
+});
+
+// PATCH /api/groups/:groupId/settings { durationMin, maxTeamSize, topK }
+router.patch(
+  '/:groupId/settings',
+  requireGroupMember,
+  requireGroupAdmin,
+  requireNotStarted,
+  wrap(async (req, res) => {
+    const data = {};
+    for (const [field, { min, max, label }] of Object.entries(LIMITS)) {
+      const value = req.body?.[field];
+      if (value === undefined) continue; // only update what was sent
+      if (!Number.isInteger(value) || value < min || value > max) {
+        return res.status(400).json({
+          error: `${label} must be a whole number from ${min} to ${max}.`,
+        });
+      }
+      data[field] = value;
+    }
+
+    const group = await prisma.group.update({
+      where: { id: req.group.id },
+      data,
+    });
+    res.json({ group: toClient(group, true) });
+  })
+);
+
+// POST /api/groups/:groupId/icon - multipart form with an "icon" file field.
+router.post(
+  '/:groupId/icon',
+  requireGroupMember,
+  requireGroupAdmin,
+  (req, res, next) => {
+    upload.single('icon')(req, res, async (err) => {
+      if (err) {
+        const error =
+          err.code === 'LIMIT_FILE_SIZE'
+            ? 'The icon must be 2 MB or smaller.'
+            : err.message;
+        return res.status(400).json({ error });
+      }
+      if (!req.file) {
+        return res.status(400).json({ error: 'Choose an image file.' });
+      }
+
+      try {
+        const oldFile = req.group.iconFile;
+        const group = await prisma.group.update({
+          where: { id: req.group.id },
+          data: { iconFile: req.file.filename },
+        });
+        // Remove the previous icon so old files don't pile up.
+        if (oldFile) {
+          await unlink(path.join(ICON_DIR, oldFile)).catch(() => {});
+        }
+        res.json({ group: toClient(group, true) });
+      } catch (dbErr) {
+        next(dbErr);
+      }
+    });
+  }
+);
+
+//POST /api/groups/:groupId/start - admin starts the event
+router.post(
+  '/:groupId/start',
+  requireGroupMember,
+  requireGroupAdmin,
+  requireNotStarted,
+  wrap(async (req, res) => {
+    // An event with no problems can't be competed in, and topK is the number of
+    // problem scores that count, so it can't exceed how many problems there are.
+    const problemCount = await prisma.problem.count({
+      where: { groupId: req.group.id },
+    });
+    if (problemCount === 0) {
+      return res
+        .status(409)
+        .json({ error: 'Add at least one problem before starting the event.' });
+    }
+    if (req.group.topK > problemCount) {
+      return res.status(409).json({
+        error: `Scored problems (${req.group.topK}) cannot be more than the ${problemCount} problem(s) you have defined.`,
+      });
+    }
+
+    // Only update if it still hasn't started, so a double-click can't move the start time.
+    const { count } = await prisma.group.updateMany({
+      where: { id: req.group.id, startedAt: null },
+      data: { startedAt: new Date() },
+    });
+    if (count === 0) {
+      return res.status(409).json({ error: 'The event has already started.' });
     }
 
     const group = await prisma.group.findUnique({
-      where: {
-        id: groupId,
-      },
+      where: { id: req.group.id },
     });
+    res.json({ group: toClient(group, true) });
+  })
+);
 
-    if (!group) {
-      return res.status(404).json({
-        error: 'Group not found.',
-      });
+// Send a group invite for admin to start eh event
+router.post(
+  '/:groupId/invites',
+  requireGroupMember,
+  requireGroupAdmin,
+  requireNotStarted,
+  wrap(async (req, res) => {
+    //A username is sent and the userId is still accepted
+    const username = String(req.body?.username ?? '').trim();
+    const rawId = Number(req.body?.userId);
+
+    const user = username
+      ? await prisma.user.findUnique({ where: { username } })
+      : Number.isInteger(rawId)
+        ? await prisma.user.findUnique({ where: { id: rawId } })
+        : null;
+
+    if (!username && !Number.isInteger(rawId)) {
+      return res.status(400).json({ error: 'Enter the username to invite.' });
     }
 
-    if (group.adminId !== req.user.id) {
-      return res.status(403).json({
-        error: 'Only the group administrator can send invitations.',
-      });
+    if (!user) {
+      return res
+        .status(404)
+        .json({
+          erro: `I know not of whom you speak... who's "${username || rawId}"?`,
+        });
+    }
+
+    const userId = user.id;
+    const groupId = req.group.id;
+
+    if (userId === req.group.adminId) {
+      return res
+        .status(400)
+        .json({ error: 'You are the amin of this group already 0-0' });
     }
 
     const existingMember = await prisma.groupMember.findUnique({
-      where: {
-        groupId_userId: {
-          groupId,
-          userId,
-        },
-      },
+      where: { groupId_userId: { groupId, userId } },
     });
-
     if (existingMember) {
-      return res.status(409).json({
-        error: 'This user is already a member of the group.',
-      });
+      return res
+        .status(409)
+        .json({ error: 'This user is already a member of the group.' });
     }
 
     const existingInvite = await prisma.groupInvite.findUnique({
-      where: {
-        groupId_userId: {
-          groupId,
-          userId,
-        },
-      },
+      where: { groupId_userId: { groupId, userId } },
     });
-
     if (existingInvite) {
-      return res.status(409).json({
-        error: 'This user already has an invitation to the group.',
-      });
+      return res
+        .status(409)
+        .json({ error: 'This user already has an invitation to the group.' });
     }
 
     const invite = await prisma.groupInvite.create({
-      data: {
-        groupId,
-        userId,
-      },
+      data: { groupId, userId },
     });
+    res
+      .status(201)
+      .json({ invite: { id: invite.id, username: user.username } });
+  })
+);
 
-    return res.status(201).json(invite);
-  } catch (err) {
-    next(err);
-  }
-});
+//This gets the signed in user's pending invitations
+router.get(
+  '/invites/mine',
+  wrap(async (req, res) => {
+    const invites = await prisma.groupInvite.findMany({
+      where: { userId: req.user.id },
+      include: { group: true },
+      orderBy: { id: 'desc' },
+    });
+    res.json({
+      invites: invites.map((i) => ({
+        id: i.id,
+        group: {
+          id: i.group.id,
+          name: i.group.name,
+          iconUrl: i.group.iconFile
+            ? `/api/uploads/icons/${i.group.iconFile}`
+            : null,
+        },
+      })),
+    });
+  })
+);
+
+//admin memebrs and pedning invites
+router.get(
+  '/:groupId/members',
+  requireGroupMember,
+  wrap(async (req, res) => {
+    const groupId = req.group.id;
+    const [admin, members, invites] = await Promise.all([
+      prisma.user.findUnique({ where: { id: req.group.adminId } }),
+      prisma.groupMember.findMany({
+        where: { groupId },
+        include: { user: true },
+        orderBy: { id: 'asc' },
+      }),
+      // Only the admin needs to see who has not answered yet.
+      req.isGroupAdmin
+        ? prisma.groupInvite.findMany({
+            where: { groupId },
+            include: { user: true },
+            orderBy: { id: 'asc' },
+          })
+        : [],
+    ]);
+
+    res.json({
+      admin: { id: admin.id, username: admin.username },
+      members: members.map((m) => ({
+        id: m.user.id,
+        username: m.user.username,
+      })),
+      invites: invites.map((i) => ({ id: i.id, username: i.user.username })),
+    });
+  })
+);
+
+//this allows an admin to cancel an invite
+router.delete(
+  '/:groupId/invites/:inviteId',
+  requireGroupMember,
+  requireAuth,
+  wrap(async (req, res) => {
+    //groupId in the filter stops cancelling another group's invite
+    const { count } = await prisma.groupInvite.deleteMany({
+      where: { id: Number(req.params.inviteId), groupId: req.group.id },
+    });
+    if (count === 0)
+      return res.status(404).json({ error: 'Invite not found.' });
+    res.json({ ok: true });
+  })
+);
 
 // Accept group invite
 router.post(

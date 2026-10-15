@@ -37,6 +37,7 @@ try {
       groupId: group.id,
       title: 'Results Test Problem',
       description: 'Temporary problem for testing submission results.',
+      orderIndex: 1,
       submissionLimit: 10,
     },
   });

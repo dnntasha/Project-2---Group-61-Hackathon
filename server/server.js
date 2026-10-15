@@ -27,7 +27,6 @@ import { requireAuth } from './middleware/auth.js';
 import { executePython } from './execution/pythonExecutor.js';
 import authRoutes from './routes/auth.js';
 import teamRoutes from './routes/teams.js';
-import groupRoutes from './routes/groups.js';
 import leaderboardRoutes from './routes/leaderboards.js';
 import { authenticate } from './lib/sessions.js';
 import { prisma } from './lib/prisma.js';
@@ -42,9 +41,11 @@ import {
   createFileNode,
   getFilePathsById,
 } from '../client/src/components/FileTree/fileTreeUtils.js';
+import groupRoutes, { ICON_DIR } from './routes/groups.js';
+import problemRoutes from './routes/problems.js';
 
 const app = express();
-const port = process.env.PORT || 5000;
+const port = process.env.PORT || 5001;
 
 // Starter contents of main.py in a newly created room
 const defaultCode = `def main():
@@ -92,9 +93,8 @@ app.get('/api/health', (req, res) => {
 
 // Authentication routes from the shared backend.
 app.use('/api/auth', authRoutes);
-app.use('/api/teams', teamRoutes);
 app.use('/api/groups', groupRoutes);
-app.use('/api/leaderboards', leaderboardRoutes);
+app.use('/api/uploads/icons', express.static(ICON_DIR));
 
 // Return teams the authenticated user is allowed to collaborate with.
 app.get('/api/my-teams', requireAuth, async (req, res) => {
@@ -122,6 +122,11 @@ app.get('/api/my-teams', requireAuth, async (req, res) => {
     });
   }
 });
+//app.use('/api/teams', teamRoutes);
+app.use('/api/groups/:groupId/problems', problemRoutes);
+app.use('/api/groups', groupRoutes);
+app.use('/api/leaderboards', leaderboardRoutes);
+app.use('/api/uploads/icons', express.static(ICON_DIR));
 
 /**
  * Thando Python execution endpoint.
