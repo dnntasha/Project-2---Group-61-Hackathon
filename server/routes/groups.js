@@ -238,22 +238,35 @@ router.post(
   requireGroupAdmin,
   requireNotStarted,
   wrap(async (req, res) => {
-    const userId = Number(req.body?.userId);
-    if (!Number.isInteger(userId)) {
-      return res.status(400).json({ error: 'A user must be selected.' });
+    //A username is sent and the userId is still accepted
+    const username = String(req.body?.username ?? '').trim();
+    const rawId = Number(req.body?.userId);
+
+    const user = username
+      ? await prisma.user.findUnique({ where: { username } })
+      : Number.isInteger(rawId)
+        ? await prisma.user.findUnique({ where: { id: rawId } })
+        : null;
+
+    if (!username && !Number.isInteger(rawId)) {
+      return res.status(400).json({ error: 'Enter the username to invite.' });
     }
 
+    if (!user) {
+      return res
+        .status(404)
+        .json({
+          erro: `I know not of whom you speak... who's "${username || rawId}"?`,
+        });
+    }
+
+    const userId = user.id;
     const groupId = req.group.id;
 
     if (userId === req.group.adminId) {
       return res
         .status(400)
-        .json({ error: 'You are already the admin of this group.' });
-    }
-
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user) {
-      return res.status(404).json({ error: 'That user does not exist.' });
+        .json({ error: 'You are the amin of this group already 0-0' });
     }
 
     const existingMember = await prisma.groupMember.findUnique({
@@ -277,7 +290,83 @@ router.post(
     const invite = await prisma.groupInvite.create({
       data: { groupId, userId },
     });
-    res.status(201).json(invite);
+    res
+      .status(201)
+      .json({ invite: { id: invite.id, username: user.username } });
+  })
+);
+
+//This gets the signed in user's pending invitations
+router.get(
+  '/invites/mine',
+  wrap(async (req, res) => {
+    const invites = await prisma.groupInvite.findMany({
+      where: { userId: req.user.id },
+      include: { group: true },
+      orderBy: { id: 'desc' },
+    });
+    res.json({
+      invites: invites.map((i) => ({
+        id: i.id,
+        group: {
+          id: i.group.id,
+          name: i.group.name,
+          iconUrl: i.group.iconFile
+            ? `/api/uploads/icons/${i.group.iconFile}`
+            : null,
+        },
+      })),
+    });
+  })
+);
+
+//admin memebrs and pedning invites
+router.get(
+  '/:groupId/members',
+  requireGroupMember,
+  wrap(async (req, res) => {
+    const groupId = req.group.id;
+    const [admin, members, invites] = await Promise.all([
+      prisma.user.findUnique({ where: { id: req.group.adminId } }),
+      prisma.groupMember.findMany({
+        where: { groupId },
+        include: { user: true },
+        orderBy: { id: 'asc' },
+      }),
+      // Only the admin needs to see who has not answered yet.
+      req.isGroupAdmin
+        ? prisma.groupInvite.findMany({
+            where: { groupId },
+            include: { user: true },
+            orderBy: { id: 'asc' },
+          })
+        : [],
+    ]);
+
+    res.json({
+      admin: { id: admin.id, username: admin.username },
+      members: members.map((m) => ({
+        id: m.user.id,
+        username: m.user.username,
+      })),
+      invites: invites.map((i) => ({ id: i.id, username: i.user.username })),
+    });
+  })
+);
+
+//this allows an admin to cancel an invite
+router.delete(
+  '/:groupId/invites/:inviteId',
+  requireGroupMember,
+  requireAuth,
+  wrap(async (req, res) => {
+    //groupId in the filter stops cancelling another group's invite
+    const { count } = await prisma.groupInvite.deleteMany({
+      where: { id: Number(req.params.inviteId), groupId: req.group.id },
+    });
+    if (count === 0)
+      return res.status(404).json({ error: 'Invite not found.' });
+    res.json({ ok: true });
   })
 );
 
