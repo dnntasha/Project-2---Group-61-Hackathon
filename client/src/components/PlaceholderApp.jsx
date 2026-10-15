@@ -4,7 +4,7 @@ import LoginPage from '../pages/LoginPage';
 import GroupsPage from '../pages/GroupsPage.jsx';
 import GroupPage from '../pages/GroupPage.jsx';
 import { AuthProvider, useAuth } from '../auth/AuthContext.jsx';
-import './PlaceholderApp.css';
+//import './PlaceholderApp.css';
 
 function App() {
   const { user, loading, signOut } = useAuth();
