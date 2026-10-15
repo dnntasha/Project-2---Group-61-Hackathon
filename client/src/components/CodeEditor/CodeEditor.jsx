@@ -739,12 +739,16 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
 
       <div className="editor-body">
         <aside className="editor-sidebar">
-          <FileTree
-            tree={tree}
-            onOperation={handleTreeOperation}
-            onSelectFile={handleSelectFile}
-            selectedPath={activeFilePath}
-          />
+          {activeRoomId || teamsLoading ? (
+            <FileTree
+              tree={tree}
+              onOperation={handleTreeOperation}
+              onSelectFile={handleSelectFile}
+              selectedPath={activeFilePath}
+            />
+          ) : (
+            <p className="editor-no-team">No team selected.</p>
+          )}
         </aside>
 
         <main className="editor-workspace">

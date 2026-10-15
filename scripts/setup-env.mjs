@@ -19,7 +19,9 @@ if (!existsSync('.env')) {
     copyFileSync('.env.example', '.env');
     console.log('.env created from .env.example');
   }
-} else if (!/^ENABLE_PYTHON_EXECUTION\s*=/m.test(readFileSync('.env', 'utf8'))) {
+} else if (
+  !/^ENABLE_PYTHON_EXECUTION\s*=/m.test(readFileSync('.env', 'utf8'))
+) {
   appendFileSync('.env', '\nENABLE_PYTHON_EXECUTION=true\n');
   console.log('Added ENABLE_PYTHON_EXECUTION=true to .env');
 }

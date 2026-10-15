@@ -107,6 +107,11 @@
   overflow-y: auto;
 }
 
+.editor-no-team {
+  padding: 16px;
+  font-size: 15px;
+}
+
 .editor-workspace {
   display: flex;
   flex-direction: column;

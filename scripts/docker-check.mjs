@@ -55,10 +55,17 @@ if (!daemonUp()) {
     const exe = [
       path.join(programFiles, 'Docker', 'Docker', 'Docker Desktop.exe'),
       path.join(programFiles, 'Rancher Desktop', 'Rancher Desktop.exe'),
-      path.join(localAppData, 'Programs', 'Rancher Desktop', 'Rancher Desktop.exe'),
+      path.join(
+        localAppData,
+        'Programs',
+        'Rancher Desktop',
+        'Rancher Desktop.exe'
+      ),
     ].find((candidate) => existsSync(candidate));
     if (!exe) {
-      fail('Docker Desktop / Rancher Desktop not found. Start Docker manually.');
+      fail(
+        'Docker Desktop / Rancher Desktop not found. Start Docker manually.'
+      );
     }
     spawnSync('cmd', ['/c', 'start', '', exe], { stdio: 'ignore' });
   } else if (process.platform === 'darwin') {
