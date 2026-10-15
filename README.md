@@ -24,7 +24,7 @@ Using the single root script to run the project you can simply run `npm run dev`
 
 ### Project info
 
-Backend: `http://localhost:5000`
+Backend: `http://localhost:5001`
 
 Frontend: `http://localhost:3000/`
 

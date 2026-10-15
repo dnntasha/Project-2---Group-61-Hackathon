@@ -1,4 +1,4 @@
-import React from 'react';
+import { React, useState } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from './pages/LoginPage.jsx';
 import FileTree from './components/FileTree/FileTree.jsx';
@@ -8,6 +8,9 @@ import LandingPage from './pages/LandingPage.jsx';
 import ResponseArea from './components/ResponseArea/ResponseArea.jsx';
 import SubmissionTimeline from './components/SubmissionTimeline/SubmissionTimeline.jsx';
 import CodeEditor from './components/CodeEditor/CodeEditor.jsx';
+import GroupsPage from './pages/GroupsPage.jsx';
+import GroupPage from './pages/GroupPage.jsx';
+
 import './App.css';
 
 // Main authenticated layout
@@ -33,39 +36,54 @@ function DashboardLayout() {
 
 function AppRoutes() {
   const { user, loading } = useAuth();
+  const [groupId, setGroupId] = useState(null);
 
   if (loading) {
     return <p style={{ margin: 'auto' }}>Loading...</p>;
   }
 
   return (
-    <Routes>
-      {/* Public Route */}
-      <Route
-        path="/login"
-        element={user ? <Navigate to="/dashboard" replace /> : <LoginPage />}
-      />
+    <>
+      {/*groupId ? (<GroupPage groupId={groupId} onBack={() => setGroupId(null)} />) : (<GroupsPage onOpen={setGroupId} />)*/}
 
-      {/* Protected Routes */}
-      <Route element={<ProtectedRoute />}>
-        <Route path="/dashboard" element={<DashboardLayout />} />
-        <Route path="/home" element={<LandingPage />} />
-        <Route path="/code" element={<ResponseArea />} />
-        <Route path="/codes" element={<SubmissionTimeline />} />
-        <Route path="/coding" element={<CodeEditor />} />
-        <Route path="/code-editor" element={<CodeEditor />} />
-        {/* Add additional protected routes here (e.g. /profile, /settings) */}
-      </Route>
+      <Routes>
+        {/* Public Route */}
+        <Route
+          path="/login"
+          element={user ? <Navigate to="/dashboard" replace /> : <LoginPage />}
+        />
 
-      {/* Root redirect */}
-      <Route
-        path="/"
-        element={<Navigate to={user ? '/dashboard' : '/login'} replace />}
-      />
+        {/* Protected Routes */}
+        <Route element={<ProtectedRoute />}>
+          <Route path="/dashboard" element={<DashboardLayout />} />
+          <Route path="/home" element={<LandingPage />} />
+          <Route path="/code" element={<ResponseArea />} />
+          <Route path="/codes" element={<SubmissionTimeline />} />
+          <Route path="/coding" element={<CodeEditor />} />
+          <Route path="/code-editor" element={<CodeEditor />} />
+          <Route
+            path="/groups"
+            element={
+              groupId ? (
+                <GroupPage groupId={groupId} onBack={() => setGroupId(null)} />
+              ) : (
+                <GroupsPage onOpen={setGroupId} />
+              )
+            }
+          />
+          {/* Add additional protected routes here (e.g. /profile, /settings) */}
+        </Route>
 
-      {/* Fallback 404 / Catch-all */}
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+        {/* Root redirect */}
+        <Route
+          path="/"
+          element={<Navigate to={user ? '/dashboard' : '/login'} replace />}
+        />
+
+        {/* Fallback 404 / Catch-all */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
   );
 }
 

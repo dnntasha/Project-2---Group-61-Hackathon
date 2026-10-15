@@ -7,7 +7,7 @@ import {
 } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import FileTree from '../FileTree/FileTree.jsx';
-import { getToken } from '../../api.js';
+import { api, getToken } from '../../api.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { getFilePathsById } from '../FileTree/fileTreeUtils.js';
 import {
@@ -85,10 +85,71 @@ function getRunOutput(message) {
 export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
-  const activeRoomId =
-    roomId ||
-    searchParams.get('roomId') ||
-    (user ? `user-${user.id}` : 'default-room');
+  const [teams, setTeams] = useState([]);
+  const [selectedTeamId, setSelectedTeamId] = useState('');
+  const [teamsLoading, setTeamsLoading] = useState(true);
+  const [teamsError, setTeamsError] = useState('');
+
+  const requestedRoomId = roomId || searchParams.get('roomId');
+
+  const selectedTeam = teams.find((team) => String(team.id) === selectedTeamId);
+
+  const activeRoomId = selectedTeam ? `team-${selectedTeam.id}` : null;
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadTeams() {
+      setTeamsLoading(true);
+      setTeamsError('');
+
+      try {
+        const response = await api('/my-teams');
+
+        if (!active) return;
+
+        const availableTeams = response.teams || [];
+        setTeams(availableTeams);
+
+        const requestedTeamId = /^team-([1-9]\d*)$/.exec(
+          requestedRoomId || ''
+        )?.[1];
+
+        const matchingTeam = availableTeams.find(
+          (team) => String(team.id) === requestedTeamId
+        );
+
+        setSelectedTeamId(
+          matchingTeam
+            ? String(matchingTeam.id)
+            : availableTeams.length > 0
+              ? String(availableTeams[0].id)
+              : ''
+        );
+      } catch (error) {
+        if (!active) return;
+
+        setTeams([]);
+        setSelectedTeamId('');
+        setTeamsError(error.message || 'Could not load your teams.');
+      } finally {
+        if (active) setTeamsLoading(false);
+      }
+    }
+
+    if (user?.id) {
+      loadTeams();
+    } else {
+      setTeams([]);
+      setSelectedTeamId('');
+      setTeamsLoading(false);
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [user?.id, requestedRoomId]);
+
   // main.py is open as soon as the editor loads
   const [activeFilePath, setActiveFilePath] = useState(DEFAULT_FILE);
   const [code, setCode] = useState('');
@@ -370,6 +431,11 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   useEffect(() => {
     let active = true;
     let socket;
+    if (!activeRoomId) {
+      setIsConnected(false);
+      socketRef.current = null;
+      return undefined;
+    }
 
     try {
       socket = new WebSocket(getWebSocketUrl(wsUrl, activeRoomId, problemId));
@@ -558,7 +624,38 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
             <span role="status">
               {isConnected ? 'Connected' : 'Disconnected'}
             </span>
-            <span className="room-label">Room: {activeRoomId}</span>
+            <span className="room-label">
+              Room: {activeRoomId || 'No team selected'}
+            </span>
+          </div>
+          <div className="editor-team-selector">
+            <label htmlFor="editor-team-select">Team: </label>
+
+            <select
+              id="editor-team-select"
+              value={selectedTeamId}
+              onChange={(event) => setSelectedTeamId(event.target.value)}
+              disabled={teamsLoading || teams.length === 0}
+              aria-label="Select collaboration team"
+            >
+              {teams.length === 0 && (
+                <option value="">
+                  {teamsLoading ? 'Loading teams...' : 'No teams available'}
+                </option>
+              )}
+
+              {teams.map((team) => (
+                <option key={team.id} value={String(team.id)}>
+                  {team.name}
+                </option>
+              ))}
+            </select>
+
+            {teamsError && (
+              <p role="alert" className="editor-team-error">
+                {teamsError}
+              </p>
+            )}
           </div>
         </div>
 

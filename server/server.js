@@ -22,25 +22,29 @@
 import express from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
+import { requireAuth } from './middleware/auth.js';
 
 import { executePython } from './execution/pythonExecutor.js';
-import { processSubmission } from './submission/submissionService.js';
 import authRoutes from './routes/auth.js';
 import teamRoutes from './routes/teams.js';
-import groupRoutes from './routes/groups.js';
 import leaderboardRoutes from './routes/leaderboards.js';
 import { authenticate } from './lib/sessions.js';
+import { prisma } from './lib/prisma.js';
+
+import { processSubmission } from './submission/submissionService.js';
 import { runPython } from './lib/pythonRunner.js';
 import { applyOp, isValidOp, transform } from './lib/textOp.js';
-// The file-tree rules live next to the client's tree UI so both sides share them
+
+// The file-tree rules live next to the client's tree UI so both sides share them.
 import {
   applyTreeOperation,
   createFileNode,
   getFilePathsById,
 } from '../client/src/components/FileTree/fileTreeUtils.js';
+import groupRoutes, { ICON_DIR } from './routes/groups.js';
 
 const app = express();
-const port = process.env.PORT || 5000;
+const port = process.env.PORT || 5001;
 
 // Starter contents of main.py in a newly created room
 const defaultCode = `def main():
@@ -88,9 +92,37 @@ app.get('/api/health', (req, res) => {
 
 // Authentication routes from the shared backend.
 app.use('/api/auth', authRoutes);
+
+// Return teams the authenticated user is allowed to collaborate with.
+app.get('/api/my-teams', requireAuth, async (req, res) => {
+  try {
+    const teams = await prisma.team.findMany({
+      where: {
+        OR: [
+          { leaderId: req.user.id },
+          { members: { some: { userId: req.user.id } } },
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        groupId: true,
+      },
+      orderBy: { id: 'asc' },
+    });
+
+    return res.json({ teams });
+  } catch (error) {
+    console.error('Failed to load user teams:', error);
+    return res.status(500).json({
+      error: 'Could not load your teams.',
+    });
+  }
+});
 app.use('/api/teams', teamRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/leaderboards', leaderboardRoutes);
+app.use('/api/uploads/icons', express.static(ICON_DIR));
 
 /**
  * Thando Python execution endpoint.
@@ -98,18 +130,31 @@ app.use('/api/leaderboards', leaderboardRoutes);
  * Executes Python code supplied by the client and returns stdout, stderr,
  * exit information, timeout information and runtime data.
  */
-app.post('/api/execute', async (req, res) => {
-  const { code, stdin = '' } = req.body;
 
-  if (typeof code !== 'string') {
-    return res.status(400).json({
-      error: 'Python code must be provided as a string.',
+app.post('/api/execute', requireAuth, async (req, res) => {
+  if (process.env.ENABLE_PYTHON_EXECUTION !== 'true') {
+    return res.status(503).json({
+      error: 'Python execution is not yet available.',
     });
   }
 
-  if (typeof stdin !== 'string') {
+  const { code, stdin = '' } = req.body ?? {};
+
+  if (
+    typeof code !== 'string' ||
+    Buffer.byteLength(code, 'utf8') > 256 * 1024
+  ) {
     return res.status(400).json({
-      error: 'stdin must be provided as a string.',
+      error: 'Python code must be a string of at most 256 KB.',
+    });
+  }
+
+  if (
+    typeof stdin !== 'string' ||
+    Buffer.byteLength(stdin, 'utf8') > 64 * 1024
+  ) {
+    return res.status(400).json({
+      error: 'stdin must be a string of at most 64 KB.',
     });
   }
 
@@ -126,38 +171,52 @@ app.post('/api/execute', async (req, res) => {
 });
 
 /**
- * Thando submission endpoint.
+ * Authenticated team submission endpoint.
  *
- * Current integration contract:
- * - codebase contains the project's file/directory tree.
- * - testCases contains the tests belonging to the selected problem.
- * - isLeader determines whether the user may submit.
- * - submissionsUsed/submissionLimit enforce the submission limit.
+ * The submission service:
+ * - Validates the codebase.
+ * - Checks team leadership and problem eligibility.
+ * - Atomically reserves an attempt.
+ * - Loads trusted test cases from the database.
+ * - Evaluates the submitted codebase.
+ * - Saves the final grading result.
  *
- * The shared application can later replace these request-body values with
- * authenticated team/problem/database state without changing the evaluator.
+ * IMPORTANT:
+ * Keep this endpoint disabled for untrusted users until
+ * the Docker deployment and remaining security checks pass.
  */
-app.post('/api/submit', async (req, res) => {
-  const {
-    codebase,
-    testCases,
-    isLeader,
-    submissionsUsed = 0,
-    submissionLimit,
-  } = req.body;
+app.post('/api/submit', requireAuth, async (req, res) => {
+  if (process.env.ENABLE_SUBMISSION_GRADING !== 'true') {
+    return res.status(503).json({
+      success: false,
+      error: 'Submission grading is not yet available.',
+    });
+  }
+  const { teamId, problemId, codebase } = req.body;
+
+  if (
+    !Number.isInteger(teamId) ||
+    teamId <= 0 ||
+    !Number.isInteger(problemId) ||
+    problemId <= 0
+  ) {
+    return res.status(400).json({
+      success: false,
+      error: 'Valid team and problem IDs are required.',
+    });
+  }
 
   try {
     const result = await processSubmission({
+      userId: req.user.id,
+      teamId,
+      problemId,
       codebase,
-      testCases,
-      isLeader,
-      submissionsUsed,
-      submissionLimit,
     });
 
     return res.status(result.status).json(result);
   } catch (error) {
-    console.error('Submission failed:', error);
+    console.error('Submission request failed:', error);
 
     return res.status(500).json({
       success: false,
@@ -532,6 +591,41 @@ wss.on('connection', async (ws, req) => {
     const auth = await authenticate(token);
     if (!auth) {
       ws.close(4001, 'Unauthorized');
+      setupDone();
+      return;
+    }
+
+    // Only team-based collaborative rooms are permitted.
+    const match = /^team-([1-9]\d*)$/.exec(roomId);
+
+    if (!match) {
+      ws.close(1008, 'A valid team room is required');
+      setupDone();
+      return;
+    }
+
+    const teamId = Number(match[1]);
+
+    if (!Number.isSafeInteger(teamId)) {
+      ws.close(1008, 'Invalid team ID');
+      setupDone();
+      return;
+    }
+
+    // Verify that the authenticated user belongs to this team.
+    const team = await prisma.team.findFirst({
+      where: {
+        id: teamId,
+        OR: [
+          { leaderId: auth.user.id },
+          { members: { some: { userId: auth.user.id } } },
+        ],
+      },
+      select: { id: true },
+    });
+
+    if (!team) {
+      ws.close(1008, 'Team access denied');
       setupDone();
       return;
     }

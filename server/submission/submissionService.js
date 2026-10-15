@@ -1,73 +1,122 @@
+import { prisma } from '../lib/prisma.js';
 import { evaluateCodebase } from '../evaluation/codebaseEvaluator.js';
+import {
+  checkSubmissionEligibility,
+  reserveSubmission,
+} from './submissionReservation.js';
+import { completeSubmission, failSubmission } from './submissionResults.js';
 
 /**
- * Validates and processes one team submission.
+ * Processes a submission using authenticated database state.
  *
- * Current responsibilities:
- * - Reject submissions from non-leaders.
- * - Enforce the supplied submission limit.
- * - Validate that a codebase and test cases were supplied.
- * - Run the codebase evaluator.
- * - Return the leaderboard score as { P, T }.
- *
- * Integration note:
- * isLeader, submissionsUsed, submissionLimit and testCases are currently
- * supplied by the API route. The shared authentication/problem/database
- * integration can provide these values from persistent application state
- * without changing the evaluator itself.
- *
- * Score contract:
  * P = percentage of tests passed.
  * T = total runtime in milliseconds for passed tests.
+ *
+ * Incorrect answers are completed grading attempts.
+ * FAILED is reserved for grading infrastructure failures.
  */
 export async function processSubmission({
+  userId,
+  teamId,
+  problemId,
   codebase,
-  testCases,
-  isLeader,
-  submissionsUsed = 0,
-  submissionLimit,
 }) {
-  if (!isLeader) {
+  if (!Number.isInteger(userId) || userId <= 0) {
     return {
       success: false,
-      status: 403,
-      error: 'Only the team leader may submit a solution.',
+      status: 401,
+      error: 'Authentication is required.',
     };
   }
 
-  if (Number.isInteger(submissionLimit) && submissionsUsed >= submissionLimit) {
-    return {
-      success: false,
-      status: 429,
-      error: 'Submission limit reached.',
-    };
-  }
-
-  if (!codebase || codebase.type !== 'directory') {
+  if (
+    !codebase ||
+    codebase.type !== 'directory' ||
+    !Array.isArray(codebase.children)
+  ) {
     return {
       success: false,
       status: 400,
-      error: 'A valid codebase is required.',
+      error: 'A valid codebase directory is required.',
     };
   }
 
-  if (!Array.isArray(testCases) || testCases.length === 0) {
+  // Check eligibility before reserving an attempt.
+  const eligibility = await checkSubmissionEligibility({
+    userId,
+    teamId,
+    problemId,
+  });
+
+  if (!eligibility.success) {
+    return eligibility;
+  }
+
+  // Atomically reserve one attempt.
+  const reservation = await reserveSubmission({
+    userId,
+    teamId,
+    problemId,
+  });
+
+  if (!reservation.success) {
+    return reservation;
+  }
+
+  const submissionId = reservation.submissionId;
+
+  try {
+    // Never accept grading test cases from the frontend.
+    const testCases = await prisma.testCase.findMany({
+      where: { problemId },
+      orderBy: { id: 'asc' },
+    });
+
+    if (testCases.length === 0) {
+      throw new Error('No test cases available for grading.');
+    }
+
+    const evaluation = await evaluateCodebase(codebase, testCases);
+
+    const completion = await completeSubmission({
+      submissionId,
+      scoreP: evaluation.passPercentage,
+      scoreT: evaluation.totalPassedRuntimeMs,
+    });
+
+    if (!completion.success) {
+      throw new Error('Unable to save submission results.');
+    }
+
+    return {
+      success: true,
+      status: 200,
+      submissionId,
+      submissionStatus: 'COMPLETED',
+      evaluation,
+      score: {
+        P: evaluation.passPercentage,
+        T: evaluation.totalPassedRuntimeMs,
+      },
+    };
+  } catch (error) {
+    console.error(`Submission ${submissionId} failed:`, error);
+
+    try {
+      await failSubmission({ submissionId });
+    } catch (failureError) {
+      console.error(
+        `Unable to mark submission ${submissionId} as failed:`,
+        failureError
+      );
+    }
+
     return {
       success: false,
-      status: 400,
-      error: 'At least one test case is required.',
+      status: 500,
+      submissionId,
+      submissionStatus: 'FAILED',
+      error: 'Submission grading could not be completed.',
     };
   }
-
-  const evaluation = await evaluateCodebase(codebase, testCases);
-
-  return {
-    success: true,
-    status: 200,
-    evaluation,
-    score: {
-      P: evaluation.passPercentage,
-      T: evaluation.totalPassedRuntimeMs,
-    },
-  };
 }

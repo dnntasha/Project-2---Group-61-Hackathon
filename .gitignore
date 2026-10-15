@@ -1,5 +1,7 @@
 node_modules/
 .env
+server/.env.example
+.env.example
 *.log
 TODO.md
 build/
@@ -9,4 +11,4 @@ devNotes.md
 *.db
 *.db-journal
 .vscode
-
+server/uploads/

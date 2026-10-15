@@ -30,15 +30,21 @@ model Session {
 }
 
 model Group {
-  id          Int    @id @default(autoincrement())
-  name        String @unique
+  id          Int       @id @default(autoincrement())
+  name        String    @unique
   adminId     Int
-  maxTeamSize Int
+  maxTeamSize Int       @default(4)
+  iconFile    String?
+  durationMin Int       @default(120)
+  topK        Int       @default(1)
+  startedAt   DateTime?
+  createdAt   DateTime? @default(now())
 
-  admin   User          @relation("GroupAdmin", fields: [adminId], references: [id])
-  members GroupMember[]
-  teams   Team[]
-  invites GroupInvite[]
+  admin    User          @relation("GroupAdmin", fields: [adminId], references: [id])
+  members  GroupMember[]
+  teams    Team[]
+  invites  GroupInvite[]
+  problems Problem[]
 }
 
 model GroupMember {
@@ -60,10 +66,11 @@ model Team {
   leaderId  Int
   createdAt DateTime @default(now())
 
-  group   Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  leader  User         @relation("TeamLeader", fields: [leaderId], references: [id])
-  members TeamMember[]
-  invites TeamInvite[]
+  group       Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  leader      User         @relation("TeamLeader", fields: [leaderId], references: [id])
+  members     TeamMember[]
+  invites     TeamInvite[]
+  submissions Submission[]
 
   @@unique([groupId, name])
 }
@@ -102,4 +109,43 @@ model GroupInvite {
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([groupId, userId])
+}
+
+model Problem {
+  id              Int      @id @default(autoincrement())
+  groupId         Int
+  title           String
+  description     String
+  submissionLimit Int      @default(5)
+  createdAt       DateTime @default(now())
+
+  group       Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  testCases   TestCase[]
+  submissions Submission[]
+}
+
+model TestCase {
+  id             Int     @id @default(autoincrement())
+  problemId      Int
+  input          String
+  expectedOutput String
+  timeLimit      Int     @default(5000)
+  hidden         Boolean @default(false)
+
+  problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+}
+
+model Submission {
+  id        Int      @id @default(autoincrement())
+  teamId    Int
+  problemId Int
+  scoreP    Float?
+  scoreT    Float?
+  status    String   @default("PENDING")
+  createdAt DateTime @default(now())
+
+  team    Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+
+  @@index([teamId, problemId])
 }
