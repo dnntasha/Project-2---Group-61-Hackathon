@@ -1,4 +1,5 @@
 /* Group list and group page. Uses the colour tokens from index.css. */
+
 .groups {
   width: 100%;
   max-width: 720px;
@@ -17,14 +18,22 @@
   margin: 0 0 6px;
 }
 
+.groups h3 {
+  font-size: 15px;
+  margin: 0;
+  color: var(--text-h);
+}
+
 .muted {
   color: var(--text);
 }
 
 /* ---- Forms ---- */
+
 .groups input[type='text'],
 .groups input:not([type]),
-.groups input[type='number'] {
+.groups input[type='number'],
+.groups select {
   font: inherit;
   color: var(--text-h);
   background: var(--bg);
@@ -33,7 +42,12 @@
   padding: 9px 12px;
 }
 
+.groups select {
+  min-height: 42px;
+}
+
 .groups input:focus-visible,
+.groups select:focus-visible,
 .groups button:focus-visible,
 .file-button:focus-within {
   outline: 2px solid var(--accent);
@@ -85,9 +99,15 @@
   border: 1px solid var(--border);
 }
 
-.btn-primary:disabled {
+.btn-primary:disabled,
+.btn-secondary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.btn-small {
+  padding: 7px 12px;
+  font-size: 14px;
 }
 
 .link-button {
@@ -101,6 +121,7 @@
 }
 
 /* ---- Create group ---- */
+
 .group-create {
   margin: 20px 0 28px;
 }
@@ -123,6 +144,7 @@
 }
 
 /* ---- Group list ---- */
+
 .group-list {
   list-style: none;
   padding: 0;
@@ -162,6 +184,7 @@
 }
 
 /* ---- Group icon ---- */
+
 .group-icon {
   flex-shrink: 0;
   border-radius: 8px;
@@ -177,6 +200,7 @@
 }
 
 /* ---- Group page ---- */
+
 .group-heading {
   display: flex;
   align-items: center;
@@ -203,18 +227,301 @@
   margin-bottom: 16px;
 }
 
+/* ---- Members ---- */
+
+.members-heading,
+.teams-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.member-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.member-list {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0 0;
+  display: grid;
+  gap: 8px;
+}
+
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.member-avatar,
+.team-avatar {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.member-avatar-small {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.member-info {
+  flex: 1;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.member-name {
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.member-meta {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.member-badge {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-radius: 999px;
+  padding: 5px 9px;
+}
+
+/* ---- Teams ---- */
+
+.teams-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.team-create {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.team-create > label,
+.team-member-invite > label {
+  display: grid;
+  gap: 7px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-h);
+}
+
+.team-create-row,
+.team-invite-row {
+  display: flex;
+  gap: 8px;
+}
+
+.team-create-row input,
+.team-invite-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.team-list {
+  display: grid;
+  gap: 10px;
+}
+
+.team-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--bg);
+}
+
+.team-card-current {
+  border-color: var(--accent);
+}
+
+.team-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.team-card-title {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 4px;
+}
+
+.team-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text-h);
+}
+
+.team-member-list {
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 0;
+  display: grid;
+  gap: 6px;
+}
+
+.team-member-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--accent-bg);
+}
+
+.team-member-name {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--text-h);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.team-member-invite {
+  border-top: 1px solid var(--border);
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.team-actions {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.team-locked {
+  border-top: 1px solid var(--border);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+
+.teams-empty,
+.teams-locked-message {
+  padding-top: 4px;
+}
+
+/* ---- Team invitations ---- */
+
+.team-invites {
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 0;
+}
+
+.team-invite-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.team-invite-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.team-invite-info {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.team-invite-info strong {
+  color: var(--text-h);
+}
+
+.team-invite-info span {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.team-invite-actions {
+  display: flex;
+  gap: 7px;
+}
+
+/* ---- Invite group member ---- */
+
+.invite-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.invite-row {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+}
+
+.invite-row label {
+  flex: 1;
+  display: grid;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-h);
+}
+
+.invite-row input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* ---- Group icon upload ---- */
+
 .file-button {
   display: inline-block;
   margin-top: 12px;
 }
 
-/* Hide the browser's file input; the label acts as the button. */
 .file-button input {
   position: absolute;
   width: 1px;
   height: 1px;
   opacity: 0;
 }
+
+/* ---- Settings ---- */
 
 .settings-grid {
   display: grid;
@@ -255,6 +562,7 @@
 }
 
 /* ---- Start the event ---- */
+
 .panel-start {
   display: flex;
   flex-wrap: wrap;
@@ -267,10 +575,49 @@
   flex-basis: 100%;
 }
 
+/* ---- Small screens ---- */
+
+@media (max-width: 560px) {
+  .invite-row,
+  .team-create-row,
+  .team-invite-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .invite-row .btn-primary,
+  .team-create-row .btn-primary,
+  .team-invite-row .btn-primary {
+    width: 100%;
+  }
+
+  .member-row {
+    align-items: flex-start;
+  }
+
+  .team-invite-card {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .team-invite-actions {
+    width: 100%;
+  }
+
+  .team-invite-actions button {
+    flex: 1;
+  }
+
+  .team-actions .btn-secondary {
+    width: 100%;
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   .btn-primary {
     color: #16171d;
   }
+
   .form-error {
     color: #f97066;
   }
