@@ -8,7 +8,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { executePythonFile } from '../execution/pythonExecutor.js';
+import { executeDockerPythonFile } from '../execution/dockerSandbox.js';
 
 /**
  * Validates a submitted file/directory name before writing it to disk.
@@ -129,7 +129,7 @@ export async function evaluateTestCase(temporaryDirectory, testCase) {
     hidden = false,
   } = testCase;
 
-  const execution = await executePythonFile(
+  const execution = await executeDockerPythonFile(
     'main.py',
     input,
     timeLimit,
@@ -143,6 +143,8 @@ export async function evaluateTestCase(temporaryDirectory, testCase) {
 
   if (execution.timedOut) {
     reason = 'Time limit exceeded.';
+  } else if (execution.outputExceeded) {
+    reason = 'Output limit exceeded.';
   } else if (execution.exitCode !== 0) {
     reason = 'Runtime error.';
   } else if (actualOutput !== expected) {
