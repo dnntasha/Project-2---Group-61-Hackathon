@@ -40,10 +40,10 @@ model Group {
   startedAt   DateTime?
   createdAt   DateTime? @default(now())
 
-  admin    User          @relation("GroupAdmin", fields: [adminId], references: [id])
-  members  GroupMember[]
-  teams    Team[]
-  invites  GroupInvite[]
+  admin   User          @relation("GroupAdmin", fields: [adminId], references: [id])
+  members GroupMember[]
+  teams   Team[]
+  invites GroupInvite[]
   problems Problem[]
 }
 
@@ -111,38 +111,46 @@ model GroupInvite {
   @@unique([groupId, userId])
 }
 
+//The programing challenge defined by the admin
 model Problem {
-  id              Int      @id @default(autoincrement())
-  groupId         Int
+  id              Int       @id @default(autoincrement())
+  groupId         Int      
+  orderIndex      Int
   title           String
   description     String
-  submissionLimit Int      @default(5)
-  createdAt       DateTime @default(now())
+  inputFormat     String    @default("")
+  outputFormat    String    @default("")
+  submissionLimit Int       @default(0) //this is where 0= unlimited
+  createdAt       DateTime  @default(now())
 
-  group       Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  group       Group         @relation(fields: [groupId], references: [id], onDelete: Cascade)
   testCases   TestCase[]
   submissions Submission[]
+
+  @@unique([groupId, orderIndex])
 }
 
+//One test for a problem 
 model TestCase {
-  id             Int     @id @default(autoincrement())
-  problemId      Int
-  input          String
-  expectedOutput String
-  timeLimit      Int     @default(5000)
-  hidden         Boolean @default(false)
+  id              Int     @id @default(autoincrement())
+  problemId       Int
+  input           String
+  expectedOutput  String
+  timeLimit       Int     @default(5000)
+  hidden          Boolean @default(false)
 
   problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
 }
 
+//A team's submitted attemt at the problem
 model Submission {
-  id        Int      @id @default(autoincrement())
-  teamId    Int
-  problemId Int
-  scoreP    Float?
-  scoreT    Float?
-  status    String   @default("PENDING")
-  createdAt DateTime @default(now())
+  id          Int         @id @default(autoincrement())
+  teamId      Int       
+  problemId   Int
+  scoreP      Float?
+  scoreT      Float?
+  status      String      @default("PENDING")
+  createdAt   DateTime    @default(now())
 
   team    Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
   problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
