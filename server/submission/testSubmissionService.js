@@ -36,6 +36,7 @@ try {
       groupId: group.id,
       title: 'Service Test Problem',
       description: 'Temporary integration test problem.',
+      orderIndex: 1,
       submissionLimit: 2,
       testCases: {
         create: [
