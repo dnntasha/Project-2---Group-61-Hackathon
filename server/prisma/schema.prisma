@@ -1,0 +1,159 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int       @id @default(autoincrement())
+  username     String    @unique
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  sessions     Session[]
+
+  adminGroups      Group[]       @relation("GroupAdmin")
+  groupMemberships GroupMember[]
+  ledTeams         Team[]        @relation("TeamLeader")
+  teamMemberships  TeamMember[]
+  teamInvites      TeamInvite[]
+  groupInvites     GroupInvite[]
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastActivity DateTime @default(now())
+}
+
+model Group {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique
+  adminId     Int
+  maxTeamSize Int       @default(4)
+  iconFile    String?
+  durationMin Int       @default(120)
+  topK        Int       @default(1)
+  startedAt   DateTime?
+  createdAt   DateTime? @default(now())
+
+  admin    User          @relation("GroupAdmin", fields: [adminId], references: [id])
+  members  GroupMember[]
+  teams    Team[]
+  problems Problem[]
+  invites  GroupInvite[]
+}
+
+model GroupMember {
+  id       Int      @id @default(autoincrement())
+  groupId  Int
+  userId   Int
+  joinedAt DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+}
+
+model Team {
+  id        Int      @id @default(autoincrement())
+  name      String
+  groupId   Int
+  leaderId  Int
+  createdAt DateTime @default(now())
+
+  group       Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  leader      User         @relation("TeamLeader", fields: [leaderId], references: [id])
+  members     TeamMember[]
+  invites     TeamInvite[]
+  submissions Submission[]
+
+  @@unique([groupId, name])
+}
+
+model TeamMember {
+  id       Int      @id @default(autoincrement())
+  teamId   Int
+  userId   Int
+  joinedAt DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+}
+
+model TeamInvite {
+  id        Int      @id @default(autoincrement())
+  teamId    Int
+  userId    Int
+  createdAt DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+}
+
+model GroupInvite {
+  id        Int      @id @default(autoincrement())
+  groupId   Int
+  userId    Int
+  createdAt DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+}
+
+//The programing challenge defined by the admin
+model Problem {
+  id              Int      @id @default(autoincrement())
+  groupId         Int
+  orderIndex      Int
+  title           String
+  description     String
+  inputFormat     String   @default("")
+  outputFormat    String   @default("")
+  submissionLimit Int      @default(0) //this is where 0= unlimited
+  createdAt       DateTime @default(now())
+
+  group       Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  testCases   TestCase[]
+  submissions Submission[]
+
+  @@unique([groupId, orderIndex])
+}
+
+//One test for a problem
+model TestCase {
+  id             Int     @id @default(autoincrement())
+  problemId      Int
+  input          String
+  expectedOutput String
+  timeLimit      Int     @default(5000)
+  hidden         Boolean @default(false)
+
+  problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+}
+
+//A team's submitted attemt at the problem
+model Submission {
+  id        Int      @id @default(autoincrement())
+  teamId    Int
+  problemId Int
+  scoreP    Float?
+  scoreT    Float?
+  status    String   @default("PENDING")
+  createdAt DateTime @default(now())
+
+  team    Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+
+  @@index([teamId, problemId])
+}

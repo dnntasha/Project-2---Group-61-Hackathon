@@ -1,0 +1,192 @@
+/* Uses the colour tokens defined in index.css so it matches the login page */
+.editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 24px 20px;
+  text-align: left;
+  box-sizing: border-box;
+}
+
+.editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-brand {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 6px;
+}
+
+.editor-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  color: var(--text-h);
+}
+
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.status-indicator.connected {
+  background-color: #12b76a;
+}
+
+.status-indicator.disconnected {
+  background-color: #d92d20;
+}
+
+.room-label {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.editor-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.editor-btn {
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-h);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.editor-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.editor-btn-primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.editor-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.editor-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.editor-body {
+  display: flex;
+  flex: 1;
+  min-height: 520px;
+  margin-top: 20px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.editor-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.editor-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.active-tab {
+  padding: 8px 16px;
+  font-size: 14px;
+  font-family: var(--mono);
+  color: var(--text-h);
+  background: var(--code-bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.code-input {
+  flex: 1;
+  width: 100%;
+  min-height: 240px;
+  background: var(--bg);
+  color: var(--text-h);
+  font-family: var(--mono);
+  font-size: 15px;
+  line-height: 1.5;
+  padding: 12px 16px;
+  border: none;
+  outline: none;
+  resize: none;
+  box-sizing: border-box;
+  tab-size: 4;
+}
+
+.code-input:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.code-input:disabled {
+  opacity: 0.6;
+}
+
+.terminal-panel {
+  border-top: 1px solid var(--border);
+  background: var(--code-bg);
+}
+
+.terminal-header {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+
+.terminal-content {
+  margin: 0;
+  padding: 12px 16px;
+  height: 160px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--text-h);
+  white-space: pre-wrap;
+}
+
+@media (max-width: 720px) {
+  .editor-body {
+    flex-direction: column;
+  }
+
+  .editor-sidebar {
+    width: auto;
+    max-height: 200px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .editor-btn-primary {
+    color: #16171d;
+  }
+}

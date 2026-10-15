@@ -1,0 +1,183 @@
+/* Uses the colour tokens already defined in index.css */
+.auth {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 48px 20px;
+  text-align: left;
+}
+
+.auth-panel {
+  width: 100%;
+  max-width: 380px;
+  animation: rise-in 450ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.auth-brand {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 12px;
+}
+
+.auth h1 {
+  font-size: 36px;
+  letter-spacing: -0.8px;
+  margin: 0 0 8px;
+}
+
+.auth-lead {
+  margin-bottom: 28px;
+}
+
+.auth-notice {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-bg);
+  color: var(--text-h);
+  padding: 10px 12px;
+  margin-bottom: 20px;
+  font-size: 15px;
+}
+
+.auth-form {
+  display: grid;
+  gap: 18px;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-h);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.auth-form input {
+  font: inherit;
+  font-weight: 400;
+  color: var(--text-h);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.auth-form input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.auth-hint {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.auth-error {
+  color: #d92d20;
+  font-size: 15px;
+}
+
+.auth-submit {
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  padding: 11px 16px;
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+.auth-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.auth-submit:focus-visible,
+.auth-switch button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.auth-switch {
+  margin-top: 24px;
+  font-size: 15px;
+}
+
+.auth-switch button {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .auth-submit {
+    color: #16171d;
+  }
+  .auth-error {
+    color: #f97066;
+  }
+}
+
+/* ---- Switching between sign in and create account ---- */
+
+/* The panel keeps its height steady so the card doesn't jump
+   when the confirm-password field appears. */
+.auth-panel {
+  min-height: 430px;
+}
+
+/* Heading and lead text: remounted on switch (key={mode}), so this replays. */
+.auth-intro {
+  animation: auth-swap 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes auth-swap {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* The confirm-password field grows open rather than popping in. */
+.auth-reveal {
+  animation: auth-reveal 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes auth-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* The submit label changes on switch, so cross-fade just the text. */
+.auth-submit span {
+  display: inline-block;
+  animation: fade-in 240ms ease-out both;
+}
+
+/* Anyone who asks for less motion gets the switch with no movement. */
+@media (prefers-reduced-motion: reduce) {
+  .auth-intro,
+  .auth-reveal,
+  .auth-submit span {
+    animation: none;
+  }
+}

@@ -1,0 +1,90 @@
+/* Uses the colour tokens defined in index.css so it matches the rest of the app */
+.file-tree {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 16px;
+  color: var(--text-h);
+  text-align: left;
+}
+
+.file-tree h2 {
+  margin: 0 0 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-h);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.file-tree-node {
+  width: 100%;
+}
+
+.file-tree-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 3px 4px;
+  border-radius: 6px;
+  font-size: 15px;
+}
+
+.file-tree-row:hover {
+  background: var(--accent-bg);
+}
+
+.file-tree-row button {
+  font: inherit;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.file-tree-row button:hover {
+  border-color: var(--accent);
+  color: var(--text-h);
+}
+
+.file-tree-row button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Name of a file, clickable to open it in the editor */
+.file-tree-row .file-tree-file {
+  padding: 2px 6px;
+  border-color: transparent;
+  font-size: 15px;
+  color: var(--text-h);
+}
+
+.file-tree-row .file-tree-file.selected {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.file-tree-row .file-tree-toggle {
+  width: 24px;
+  padding: 2px;
+  border: none;
+}
+
+.file-tree-toggle-placeholder {
+  display: inline-block;
+  width: 24px;
+  flex-shrink: 0;
+}
+
+.file-tree-children {
+  margin-left: 12px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}

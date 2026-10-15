@@ -1,0 +1,44 @@
+/* Styles for the signed-in screen. Uses the colour tokens from index.css. */
+.app-loading {
+  margin: auto;
+  color: var(--text);
+}
+
+.app-shell {
+  flex: 1;
+  padding: 24px;
+  text-align: left;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-user {
+  margin: 0;
+}
+
+.app-signout {
+  font: inherit;
+  font-size: 15px;
+  color: var(--text-h);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.app-signout:hover {
+  border-color: var(--accent);
+}
+
+.app-signout:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
