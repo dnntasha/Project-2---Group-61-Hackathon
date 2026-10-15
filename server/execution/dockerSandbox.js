@@ -4,7 +4,7 @@ import { performance } from 'node:perf_hooks';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
-const IMAGE = 'python:3.12-slim';
+export const IMAGE = 'python:3.12-slim';
 const DEFAULT_TIMEOUT_MS = 5000;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const DOCKER_COMMAND = 'docker';
@@ -98,6 +98,12 @@ export async function executeDockerPythonFile(
 
   const started = performance.now();
   const containerName = `cs343-${randomUUID()}`;
+  // process.getuid does not exist on Windows. Docker Desktop maps bind mounts
+  // to world-readable files there, so an unprivileged user (nobody) is enough.
+  const containerUser =
+    typeof process.getuid === 'function'
+      ? `${process.getuid()}:${process.getgid()}`
+      : '65534:65534';
 
   const createArgs = [
     'create',
@@ -118,7 +124,7 @@ export async function executeDockerPythonFile(
     '--security-opt',
     'no-new-privileges',
     '--user',
-    `${process.getuid()}:${process.getgid()}`,
+    containerUser,
     '--mount',
     `type=bind,src=${cwd},dst=/app,readonly`,
     '--workdir',
