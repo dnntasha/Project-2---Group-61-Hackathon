@@ -33,6 +33,7 @@ import { authenticate } from './lib/sessions.js';
 import { prisma } from './lib/prisma.js';
 
 import { processSubmission } from './submission/submissionService.js';
+import { failInterruptedSubmissions } from './submission/submissionResults.js';
 import { runPython } from './lib/pythonRunner.js';
 import { applyOp, isValidOp, transform } from './lib/textOp.js';
 
@@ -248,14 +249,24 @@ app.use('/api', (req, res) => {
 // Shared error handler.
 // Keep this after the HTTP routes so route errors can reach it.
 app.use((err, req, res, _next) => {
-  // Body-parser errors (malformed JSON, body too large) carry a 4xx status
+  // 4xx errors: body-parser failures (malformed JSON, body too large, which
+  // have a `type`) and errors thrown by routes with a status and message
   if (err.status >= 400 && err.status < 500) {
     return res.status(err.status).json({
       error:
         err.type === 'entity.too.large'
           ? 'The request is too large.'
-          : 'The request is invalid.',
+          : err.type
+            ? 'The request is invalid.'
+            : err.message,
     });
+  }
+  // Prisma: unique constraint hit by a concurrent request / record gone
+  if (err.code === 'P2002') {
+    return res.status(409).json({ error: 'That already exists.' });
+  }
+  if (err.code === 'P2025') {
+    return res.status(404).json({ error: 'Not found.' });
   }
   console.error(err);
   res.status(500).json({ error: 'There has been an error with the server' });
@@ -717,6 +728,14 @@ server.listen(port, () => {
     process.env.ENABLE_PYTHON_EXECUTION === 'true' ||
     process.env.ENABLE_SUBMISSION_GRADING === 'true'
   ) {
+    failInterruptedSubmissions()
+      .then((failed) => {
+        if (failed)
+          console.log(`Marked ${failed} interrupted submissions as failed.`);
+      })
+      .catch((error) => {
+        console.error('Could not clean up interrupted submissions:', error);
+      });
     removeOrphanedContainers().then((removed) => {
       if (removed)
         console.log(`Removed ${removed} leftover sandbox containers.`);

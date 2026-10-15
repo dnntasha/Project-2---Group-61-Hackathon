@@ -29,6 +29,68 @@ function validateNodeName(name) {
   }
 }
 
+// Upper bounds for a submitted tree, matching the editor's room limits
+const MAX_TREE_FILES = 200;
+const MAX_TREE_DEPTH = 20;
+const MAX_TOTAL_CONTENT_BYTES = 512 * 1024;
+
+/**
+ * Checks a submitted codebase tree without touching the disk. Returns an
+ * error message, or null when the tree can be written and run.
+ */
+export function validateCodebaseTree(codebase) {
+  if (
+    !codebase ||
+    codebase.type !== 'directory' ||
+    !Array.isArray(codebase.children)
+  ) {
+    return 'A valid codebase directory is required.';
+  }
+
+  let files = 0;
+  let bytes = 0;
+
+  function check(children, depth) {
+    if (depth > MAX_TREE_DEPTH) return 'The codebase is nested too deeply.';
+
+    const names = new Set();
+    for (const node of children) {
+      try {
+        validateNodeName(node?.name);
+      } catch (error) {
+        return error.message;
+      }
+      // Names are compared case-insensitively since Windows file systems are
+      if (names.has(node.name.toLowerCase())) {
+        return `Duplicate name in the same folder: ${node.name}`;
+      }
+      names.add(node.name.toLowerCase());
+
+      if (node.type === 'directory') {
+        if (!Array.isArray(node.children ?? [])) {
+          return `Invalid directory: ${node.name}`;
+        }
+        const error = check(node.children ?? [], depth + 1);
+        if (error) return error;
+      } else if (node.type === 'file') {
+        if (node.content !== undefined && typeof node.content !== 'string') {
+          return `File content must be text: ${node.name}`;
+        }
+        files += 1;
+        bytes += Buffer.byteLength(node.content ?? '', 'utf8');
+      } else {
+        return `Invalid node type: ${node.type}`;
+      }
+    }
+
+    if (files > MAX_TREE_FILES) return 'The codebase has too many files.';
+    if (bytes > MAX_TOTAL_CONTENT_BYTES) return 'The codebase is too large.';
+    return null;
+  }
+
+  return check(codebase.children, 0);
+}
+
 /**
  * Recursively rebuilds one file-tree node inside the temporary submission
  * directory. Directory children are reconstructed recursively while file

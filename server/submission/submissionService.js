@@ -1,5 +1,8 @@
 import { prisma } from '../lib/prisma.js';
-import { evaluateCodebase } from '../evaluation/codebaseEvaluator.js';
+import {
+  evaluateCodebase,
+  validateCodebaseTree,
+} from '../evaluation/codebaseEvaluator.js';
 import {
   checkSubmissionEligibility,
   reserveSubmission,
@@ -29,15 +32,13 @@ export async function processSubmission({
     };
   }
 
-  if (
-    !codebase ||
-    codebase.type !== 'directory' ||
-    !Array.isArray(codebase.children)
-  ) {
+  // Validate the whole tree up front so bad input doesn't use up an attempt
+  const treeError = validateCodebaseTree(codebase);
+  if (treeError) {
     return {
       success: false,
       status: 400,
-      error: 'A valid codebase directory is required.',
+      error: treeError,
     };
   }
 
@@ -103,7 +104,13 @@ export async function processSubmission({
     console.error(`Submission ${submissionId} failed:`, error);
 
     try {
-      await failSubmission({ submissionId });
+      const failure = await failSubmission({ submissionId });
+      if (!failure.success) {
+        console.error(
+          `Unable to mark submission ${submissionId} as failed:`,
+          failure.error
+        );
+      }
     } catch (failureError) {
       console.error(
         `Unable to mark submission ${submissionId} as failed:`,

@@ -1,7 +1,10 @@
 //this will be implemented after the requireAuth
 import { prisma } from '../lib/prisma.js';
+import { EVENT_STATUS, getEventStatus } from '../lib/eventTime.js';
 
-export const hasStarted = (group) => group.startedAt !== null;
+// True once the admin has started the event (running or already ended)
+export const hasStarted = (group) =>
+  getEventStatus(group) !== EVENT_STATUS.NOT_STARTED;
 
 //Groups are loaded anf checks if a user is admin or a member
 

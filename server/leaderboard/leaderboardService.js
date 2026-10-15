@@ -1,3 +1,5 @@
+const SCORE_EPSILON = 1e-9;
+
 export function buildProblemLeaderboard(scores) {
   const sorted = [...scores].sort((a, b) => {
     // Higher percentage passed is better
@@ -75,7 +77,12 @@ export function buildFinalLeaderboard(teams, k) {
   let previousScore = null;
 
   return scoredTeams.map((team) => {
-    if (previousScore === null || team.finalScore !== previousScore) {
+    // Scores are sums of fractions, so compare with a tolerance
+    // (0.1 + 0.2 must tie with 0.3)
+    if (
+      previousScore === null ||
+      Math.abs(team.finalScore - previousScore) > SCORE_EPSILON
+    ) {
       currentRank += 1;
     }
 
