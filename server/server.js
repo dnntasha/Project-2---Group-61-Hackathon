@@ -42,6 +42,7 @@ import {
   getFilePathsById,
 } from '../client/src/components/FileTree/fileTreeUtils.js';
 import groupRoutes, { ICON_DIR } from './routes/groups.js';
+import problemRoutes from './routes/problems.js';
 
 const app = express();
 const port = process.env.PORT || 5001;
@@ -92,6 +93,8 @@ app.get('/api/health', (req, res) => {
 
 // Authentication routes from the shared backend.
 app.use('/api/auth', authRoutes);
+app.use('/api/groups', groupRoutes);
+app.use('/api/uploads/icons', express.static(ICON_DIR));
 
 // Return teams the authenticated user is allowed to collaborate with.
 app.get('/api/my-teams', requireAuth, async (req, res) => {
@@ -119,7 +122,8 @@ app.get('/api/my-teams', requireAuth, async (req, res) => {
     });
   }
 });
-app.use('/api/teams', teamRoutes);
+//app.use('/api/teams', teamRoutes);
+app.use('/api/groups/:groupId/problems', problemRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/leaderboards', leaderboardRoutes);
 app.use('/api/uploads/icons', express.static(ICON_DIR));

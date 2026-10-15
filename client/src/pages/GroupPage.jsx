@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import GroupIcon from '../components/GroupIcon.jsx';
 import Countdown from '../components/Countdown.jsx';
+import ProblemsPanel from '../components/ProblemsPanel.jsx';
+import GroupMembers from '../components/GroupMembers.jsx';
 import './Groups.css';
 
 const STATUS_TEXT = {
@@ -68,6 +70,10 @@ export default function GroupPage({ groupId, onBack }) {
           ) : (
             <SettingsSummary group={group} />
           )}
+
+          <GroupMembers group={group} />
+
+          <ProblemsPanel group={group} />
         </>
       )}
     </section>
@@ -105,7 +111,7 @@ function StartEvent({ group, onStarted }) {
         </p>
       </div>
       <button className="btn-primary" onClick={handleStart} disabled={busy}>
-        {busy ? 'Starting…' : 'Start event'}
+        {busy ? 'Starting...' : 'Start event'}
       </button>
       {error && (
         <p className="form-error" role="alert">
