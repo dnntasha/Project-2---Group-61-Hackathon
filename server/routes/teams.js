@@ -1,9 +1,10 @@
 import { Router } from 'express';
-import { PrismaClient } from '@prisma/client';
+
+import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
+import { hasStarted } from '../middleware/groups.js';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 // Create a team
 router.post('/', requireAuth, async (req, res, next) => {
@@ -16,6 +17,25 @@ router.post('/', requireAuth, async (req, res, next) => {
       });
     }
 
+    const group = await prisma.group.findUnique({
+      where: {
+        id: groupId,
+      },
+    });
+
+    if (!group) {
+      return res.status(404).json({
+        error: 'Group not found.',
+      });
+    }
+
+    if (hasStarted(group)) {
+      return res.status(409).json({
+        error:
+          'The event has already started, so teams can no longer be changed.',
+      });
+    }
+
     const membership = await prisma.groupMember.findUnique({
       where: {
         groupId_userId: {
@@ -25,7 +45,9 @@ router.post('/', requireAuth, async (req, res, next) => {
       },
     });
 
-    if (!membership) {
+    const isAdmin = group.adminId === req.user.id;
+
+    if (!membership && !isAdmin) {
       return res.status(403).json({
         error: 'You must be a member of the group to create a team.',
       });
@@ -90,9 +112,15 @@ router.post('/:teamId/invites', requireAuth, async (req, res, next) => {
     const teamId = Number(req.params.teamId);
     const { userId } = req.body;
 
-    if (!userId) {
+    if (!Number.isInteger(teamId)) {
       return res.status(400).json({
-        error: 'A user must be selected.',
+        error: 'Invalid team.',
+      });
+    }
+
+    if (!Number.isInteger(userId)) {
+      return res.status(400).json({
+        error: 'A valid user must be selected.',
       });
     }
 
@@ -113,9 +141,27 @@ router.post('/:teamId/invites', requireAuth, async (req, res, next) => {
       });
     }
 
+    if (hasStarted(team.group)) {
+      return res.status(409).json({
+        error: 'The event has already started, so team invitations are closed.',
+      });
+    }
+
     if (team.leaderId !== req.user.id) {
       return res.status(403).json({
         error: 'Only the team leader can invite users.',
+      });
+    }
+
+    const invitedUser = await prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+    });
+
+    if (!invitedUser) {
+      return res.status(404).json({
+        error: 'User not found.',
       });
     }
 
@@ -208,6 +254,12 @@ router.post(
     try {
       const inviteId = Number(req.params.inviteId);
 
+      if (!Number.isInteger(inviteId)) {
+        return res.status(400).json({
+          error: 'Invalid invitation.',
+        });
+      }
+
       const invite = await prisma.teamInvite.findUnique({
         where: {
           id: inviteId,
@@ -231,6 +283,13 @@ router.post(
       if (invite.userId !== req.user.id) {
         return res.status(403).json({
           error: 'This invitation does not belong to you.',
+        });
+      }
+
+      // Do not allow team changes once the hackathon has started.
+      if (hasStarted(invite.team.group)) {
+        return res.status(409).json({
+          error: 'The event has already started, so you cannot join this team.',
         });
       }
 
@@ -288,6 +347,12 @@ router.post(
     try {
       const inviteId = Number(req.params.inviteId);
 
+      if (!Number.isInteger(inviteId)) {
+        return res.status(400).json({
+          error: 'Invalid invitation.',
+        });
+      }
+
       const invite = await prisma.teamInvite.findUnique({
         where: {
           id: inviteId,
@@ -326,11 +391,18 @@ router.post('/:teamId/leave', requireAuth, async (req, res, next) => {
   try {
     const teamId = Number(req.params.teamId);
 
+    if (!Number.isInteger(teamId)) {
+      return res.status(400).json({
+        error: 'Invalid team.',
+      });
+    }
+
     const team = await prisma.team.findUnique({
       where: {
         id: teamId,
       },
       include: {
+        group: true,
         members: {
           orderBy: {
             joinedAt: 'asc',
@@ -342,6 +414,13 @@ router.post('/:teamId/leave', requireAuth, async (req, res, next) => {
     if (!team) {
       return res.status(404).json({
         error: 'Team not found.',
+      });
+    }
+
+    // Team membership may not change after the event has started.
+    if (hasStarted(team.group)) {
+      return res.status(409).json({
+        error: 'The event has already started, so you cannot leave your team.',
       });
     }
 
@@ -368,8 +447,8 @@ router.post('/:teamId/leave', requireAuth, async (req, res, next) => {
       });
     }
 
-    // If the leader leaves, hand leadership to the longest-standing
-    // remaining team member
+    // If the leader leaves, transfer leadership to the
+    // longest-standing remaining team member.
     if (team.leaderId === req.user.id) {
       const newLeader = team.members.find(
         (member) => member.userId !== req.user.id

@@ -1,4 +1,5 @@
 /* Group list and group page. Uses the colour tokens from index.css. */
+
 .groups {
   width: 100%;
   max-width: 720px;
@@ -22,6 +23,7 @@
 }
 
 /* ---- Forms ---- */
+
 .groups input[type='text'],
 .groups input:not([type]),
 .groups input[type='number'] {
@@ -101,6 +103,7 @@
 }
 
 /* ---- Create group ---- */
+
 .group-create {
   margin: 20px 0 28px;
 }
@@ -123,6 +126,7 @@
 }
 
 /* ---- Group list ---- */
+
 .group-list {
   list-style: none;
   padding: 0;
@@ -162,6 +166,7 @@
 }
 
 /* ---- Group icon ---- */
+
 .group-icon {
   flex-shrink: 0;
   border-radius: 8px;
@@ -177,6 +182,7 @@
 }
 
 /* ---- Group page ---- */
+
 .group-heading {
   display: flex;
   align-items: center;
@@ -203,18 +209,125 @@
   margin-bottom: 16px;
 }
 
+/* ---- Members ---- */
+
+.members-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.member-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.member-list {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0 0;
+  display: grid;
+  gap: 8px;
+}
+
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.member-avatar {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.member-info {
+  flex: 1;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.member-name {
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.member-meta {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.member-badge {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-radius: 999px;
+  padding: 5px 9px;
+}
+
+/* ---- Invite member ---- */
+
+.invite-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.invite-row {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+}
+
+.invite-row label {
+  flex: 1;
+  display: grid;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-h);
+}
+
+.invite-row input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* ---- Group icon upload ---- */
+
 .file-button {
   display: inline-block;
   margin-top: 12px;
 }
 
-/* Hide the browser's file input; the label acts as the button. */
 .file-button input {
   position: absolute;
   width: 1px;
   height: 1px;
   opacity: 0;
 }
+
+/* ---- Settings ---- */
 
 .settings-grid {
   display: grid;
@@ -255,6 +368,7 @@
 }
 
 /* ---- Start the event ---- */
+
 .panel-start {
   display: flex;
   flex-wrap: wrap;
@@ -267,10 +381,28 @@
   flex-basis: 100%;
 }
 
+/* ---- Small screens ---- */
+
+@media (max-width: 560px) {
+  .invite-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .invite-row .btn-primary {
+    width: 100%;
+  }
+
+  .member-row {
+    align-items: flex-start;
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   .btn-primary {
     color: #16171d;
   }
+
   .form-error {
     color: #f97066;
   }
