@@ -253,11 +253,9 @@ router.post(
     }
 
     if (!user) {
-      return res
-        .status(404)
-        .json({
-          erro: `I know not of whom you speak... who's "${username || rawId}"?`,
-        });
+      return res.status(404).json({
+        erro: `I know not of whom you speak... who's "${username || rawId}"?`,
+      });
     }
 
     const userId = user.id;
