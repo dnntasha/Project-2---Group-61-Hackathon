@@ -14,8 +14,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: clientPort,
-    // Allow importing the shared text-operation module from ../server/lib
-    fs: { allow: ['..'] },
+    // Serve the client plus the one server module it shares (text
+    // operations), rather than the whole repository (incl. the database)
+    fs: { allow: ['.', '../server/lib/textOp.js'] },
     proxy: {
       '/api': {
         target: `http://localhost:${apiPort}`,

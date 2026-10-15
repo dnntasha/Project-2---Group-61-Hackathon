@@ -1,7 +1,24 @@
 .navbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   padding: 0 16px;
+}
+
+.navbar-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 15px;
+  padding: 8px 0;
+}
+
+.navbar-user strong {
+  color: var(--text-h);
 }
 
 .navbar-list {

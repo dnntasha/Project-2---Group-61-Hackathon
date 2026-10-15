@@ -1,26 +1,8 @@
 /* Styles for the signed-in screen. Uses the colour tokens from index.css. */
-.app-loading {
-  margin: auto;
-  color: var(--text);
-}
-
 .app-shell {
   flex: 1;
   padding: 24px;
   text-align: left;
-}
-
-.app-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.app-user {
-  margin: 0;
 }
 
 .app-signout {
