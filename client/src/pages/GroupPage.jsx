@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import GroupIcon from '../components/GroupIcon.jsx';
 import Countdown from '../components/Countdown.jsx';
@@ -48,7 +48,6 @@ export default function GroupPage({ groupId, onBack }) {
       </button>
 
       {loadError && <p className="form-error">{loadError}</p>}
-
       {!group && !loadError && <p className="muted">Loading…</p>}
 
       {group && (
@@ -58,7 +57,6 @@ export default function GroupPage({ groupId, onBack }) {
 
             <div>
               <h1>{group.name}</h1>
-
               <p className="muted">
                 {group.isAdmin ? 'You are the admin' : 'Member'} ·{' '}
                 {STATUS_TEXT[group.status]}
@@ -85,12 +83,13 @@ export default function GroupPage({ groupId, onBack }) {
 
           <MembersList group={group} />
 
+          <TeamsPanel group={group} />
+
           {group.isAdmin && <InviteUser group={group} />}
 
           {group.isAdmin ? (
             <>
               <IconUpload group={group} onSaved={setGroup} />
-
               <SettingsForm group={group} onSaved={setGroup} />
             </>
           ) : (
@@ -132,7 +131,6 @@ function StartEvent({ group, onStarted }) {
     <div className="panel panel-start">
       <div>
         <h2>Start the event</h2>
-
         <p className="form-hint">
           Runs for {group.durationMin} minutes. Teams lock and problems become
           visible.
@@ -160,7 +158,6 @@ function MembersList({ group }) {
       <div className="members-heading">
         <div>
           <h2>Members</h2>
-
           <p className="form-hint">
             {members.length} {members.length === 1 ? 'member' : 'members'} in
             this group.
@@ -180,7 +177,6 @@ function MembersList({ group }) {
 
               <div className="member-info">
                 <span className="member-name">{member.username}</span>
-
                 <span className="member-meta">User #{member.id}</span>
               </div>
 
@@ -190,6 +186,429 @@ function MembersList({ group }) {
         </ul>
       ) : (
         <p className="form-hint">No members yet.</p>
+      )}
+    </div>
+  );
+}
+
+function TeamsPanel({ group }) {
+  const [teamData, setTeamData] = useState(null);
+  const [error, setError] = useState('');
+
+  const loadTeams = useCallback(async () => {
+    try {
+      setError('');
+      const data = await api(`/teams/group/${group.id}`);
+      setTeamData(data);
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [group.id]);
+
+  useEffect(() => {
+    loadTeams();
+  }, [loadTeams]);
+
+  const locked = Boolean(group.startedAt);
+
+  return (
+    <div className="panel teams-panel">
+      <div className="teams-heading">
+        <div>
+          <h2>Teams</h2>
+          <p className="form-hint">
+            Create a team or manage your team for this event.
+          </p>
+        </div>
+
+        {teamData && (
+          <span className="member-count">{teamData.teams.length}</span>
+        )}
+      </div>
+
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+
+      {!teamData && !error && <p className="muted">Loading teams…</p>}
+
+      {teamData && (
+        <>
+          <PendingTeamInvites
+            invites={teamData.pendingInvites}
+            locked={locked}
+            onChanged={loadTeams}
+          />
+
+          {!locked && !teamData.currentTeamId && (
+            <CreateTeam group={group} onCreated={loadTeams} />
+          )}
+
+          {locked && !teamData.currentTeamId && (
+            <p className="form-hint teams-locked-message">
+              Team creation is closed because the event has started.
+            </p>
+          )}
+
+          {teamData.teams.length === 0 ? (
+            <p className="form-hint teams-empty">
+              No teams have been created yet.
+            </p>
+          ) : (
+            <div className="team-list">
+              {teamData.teams.map((team) => (
+                <TeamCard
+                  key={team.id}
+                  team={team}
+                  group={group}
+                  locked={locked}
+                  maxTeamSize={teamData.maxTeamSize}
+                  onChanged={loadTeams}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function CreateTeam({ group, onCreated }) {
+  const [name, setName] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function handleCreate(e) {
+    e.preventDefault();
+
+    const trimmed = name.trim();
+
+    if (!trimmed) return;
+
+    setError('');
+    setBusy(true);
+
+    try {
+      await api('/teams', {
+        method: 'POST',
+        body: {
+          name: trimmed,
+          groupId: group.id,
+        },
+      });
+
+      setName('');
+      await onCreated();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="team-create" onSubmit={handleCreate}>
+      <label>
+        Create a team
+        <div className="team-create-row">
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              setError('');
+            }}
+            placeholder="Enter team name"
+            maxLength={40}
+            required
+          />
+
+          <button
+            className="btn-primary"
+            type="submit"
+            disabled={busy || !name.trim()}
+          >
+            {busy ? 'Creating…' : 'Create team'}
+          </button>
+        </div>
+      </label>
+
+      <p className="form-hint">
+        You become the team leader when you create a team.
+      </p>
+
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+
+function PendingTeamInvites({ invites, locked, onChanged }) {
+  const [error, setError] = useState('');
+  const [busyId, setBusyId] = useState(null);
+
+  if (!invites?.length) {
+    return null;
+  }
+
+  async function handleInvite(inviteId, action) {
+    setError('');
+    setBusyId(inviteId);
+
+    try {
+      await api(`/teams/invites/${inviteId}/${action}`, {
+        method: 'POST',
+      });
+
+      await onChanged();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="team-invites">
+      <h3>Team invitations</h3>
+
+      <div className="team-invite-list">
+        {invites.map((invite) => (
+          <div className="team-invite-card" key={invite.id}>
+            <div className="team-avatar">
+              {invite.team.name.charAt(0).toUpperCase()}
+            </div>
+
+            <div className="team-invite-info">
+              <strong>{invite.team.name}</strong>
+              <span>Invited by {invite.team.leaderUsername}</span>
+            </div>
+
+            <div className="team-invite-actions">
+              <button
+                className="btn-secondary btn-small"
+                type="button"
+                disabled={busyId === invite.id}
+                onClick={() => handleInvite(invite.id, 'decline')}
+              >
+                Decline
+              </button>
+
+              <button
+                className="btn-primary btn-small"
+                type="button"
+                disabled={locked || busyId === invite.id}
+                onClick={() => handleInvite(invite.id, 'accept')}
+              >
+                {locked ? 'Closed' : 'Accept'}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function TeamCard({ team, group, locked, maxTeamSize, onChanged }) {
+  const [inviteUserId, setInviteUserId] = useState('');
+  const [inviteError, setInviteError] = useState('');
+  const [inviteSuccess, setInviteSuccess] = useState('');
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [leaveBusy, setLeaveBusy] = useState(false);
+  const [leaveError, setLeaveError] = useState('');
+
+  const eligibleMembers = (group.members || []).filter(
+    (groupMember) =>
+      !team.members.some((teamMember) => teamMember.id === groupMember.id)
+  );
+
+  async function handleInvite(e) {
+    e.preventDefault();
+
+    const id = Number(inviteUserId);
+
+    if (!Number.isInteger(id)) {
+      setInviteError('Select a group member.');
+      return;
+    }
+
+    setInviteError('');
+    setInviteSuccess('');
+    setInviteBusy(true);
+
+    try {
+      await api(`/teams/${team.id}/invites`, {
+        method: 'POST',
+        body: {
+          userId: id,
+        },
+      });
+
+      setInviteSuccess('Team invitation sent.');
+      setInviteUserId('');
+
+      await onChanged();
+    } catch (err) {
+      setInviteError(err.message);
+    } finally {
+      setInviteBusy(false);
+    }
+  }
+
+  async function handleLeave() {
+    const ok = window.confirm(
+      team.isCurrentUserLeader
+        ? 'Leave this team? Leadership will pass to the longest-standing remaining member.'
+        : 'Leave this team?'
+    );
+
+    if (!ok) return;
+
+    setLeaveError('');
+    setLeaveBusy(true);
+
+    try {
+      await api(`/teams/${team.id}/leave`, {
+        method: 'POST',
+      });
+
+      await onChanged();
+    } catch (err) {
+      setLeaveError(err.message);
+    } finally {
+      setLeaveBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className={`team-card ${
+        team.isCurrentUserMember ? 'team-card-current' : ''
+      }`}
+    >
+      <div className="team-card-heading">
+        <div className="team-avatar">{team.name.charAt(0).toUpperCase()}</div>
+
+        <div className="team-card-title">
+          <div className="team-name-row">
+            <strong>{team.name}</strong>
+
+            {team.isCurrentUserMember && (
+              <span className="member-badge">Your team</span>
+            )}
+          </div>
+
+          <span className="member-meta">
+            {team.members.length}/{maxTeamSize} members · Leader:{' '}
+            {team.leaderUsername}
+          </span>
+        </div>
+      </div>
+
+      <ul className="team-member-list">
+        {team.members.map((member) => (
+          <li className="team-member-row" key={member.id}>
+            <div className="team-member-name">
+              <div className="member-avatar member-avatar-small">
+                {member.username.charAt(0).toUpperCase()}
+              </div>
+
+              <span>{member.username}</span>
+            </div>
+
+            {member.isLeader && <span className="member-badge">Leader</span>}
+          </li>
+        ))}
+      </ul>
+
+      {team.isCurrentUserLeader && !locked && (
+        <form className="team-member-invite" onSubmit={handleInvite}>
+          <label>
+            Invite a group member
+            <div className="team-invite-row">
+              <select
+                value={inviteUserId}
+                onChange={(e) => {
+                  setInviteUserId(e.target.value);
+                  setInviteError('');
+                  setInviteSuccess('');
+                }}
+                disabled={inviteBusy || team.members.length >= maxTeamSize}
+                required
+              >
+                <option value="">Choose a member</option>
+
+                {eligibleMembers.map((member) => (
+                  <option value={member.id} key={member.id}>
+                    {member.username}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                className="btn-primary btn-small"
+                type="submit"
+                disabled={
+                  inviteBusy ||
+                  !inviteUserId ||
+                  team.members.length >= maxTeamSize
+                }
+              >
+                {inviteBusy ? 'Sending…' : 'Invite'}
+              </button>
+            </div>
+          </label>
+
+          {eligibleMembers.length === 0 && (
+            <p className="form-hint">No available group members to invite.</p>
+          )}
+
+          {inviteError && (
+            <p className="form-error" role="alert">
+              {inviteError}
+            </p>
+          )}
+
+          {inviteSuccess && <p className="form-saved">{inviteSuccess}</p>}
+        </form>
+      )}
+
+      {team.isCurrentUserMember && !locked && (
+        <div className="team-actions">
+          <button
+            className="btn-secondary"
+            type="button"
+            disabled={leaveBusy}
+            onClick={handleLeave}
+          >
+            {leaveBusy ? 'Leaving…' : 'Leave team'}
+          </button>
+        </div>
+      )}
+
+      {team.isCurrentUserMember && locked && (
+        <p className="form-hint team-locked">
+          Team membership is locked for the event.
+        </p>
+      )}
+
+      {leaveError && (
+        <p className="form-error" role="alert">
+          {leaveError}
+        </p>
       )}
     </div>
   );
@@ -221,7 +640,6 @@ function InviteUser({ group }) {
     try {
       await api(`/groups/${group.id}/invites`, {
         method: 'POST',
-
         body: {
           userId: id,
         },
@@ -240,7 +658,6 @@ function InviteUser({ group }) {
     <form className="panel invite-panel" onSubmit={handleInvite}>
       <div>
         <h2>Invite a member</h2>
-
         <p className="form-hint">Invite another user to join this group.</p>
       </div>
 

@@ -1,5 +1,6 @@
 import { React, useState } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
+
 import LoginPage from './pages/LoginPage.jsx';
 import FileTree from './components/FileTree/FileTree.jsx';
 import { AuthProvider, useAuth } from './auth/AuthContext.jsx';
@@ -13,9 +14,11 @@ import GroupPage from './pages/GroupPage.jsx';
 
 import './App.css';
 
-// Main authenticated layout
+// Main authenticated dashboard.
+// Keeps the group/team UI and the editor/files UI on the same page.
 function DashboardLayout() {
   const { user, signOut } = useAuth();
+  const [groupId, setGroupId] = useState(null);
 
   return (
     <main className="app-shell page-enter">
@@ -23,76 +26,75 @@ function DashboardLayout() {
         <p>
           You are signed in as <strong>{user?.username}</strong>
         </p>
+
         <button type="button" className="app-signout" onClick={signOut}>
           Sign out
         </button>
       </header>
 
-      {/* P4 file tree */}
-      <FileTree />
+      {/* Group / team management */}
+      <section className="dashboard-groups">
+        {groupId ? (
+          <GroupPage groupId={groupId} onBack={() => setGroupId(null)} />
+        ) : (
+          <GroupsPage onOpen={setGroupId} />
+        )}
+      </section>
+
+      {/* Collaborative editor / file tree */}
+      <section className="dashboard-editor">
+        <FileTree />
+      </section>
     </main>
   );
 }
 
 function AppRoutes() {
   const { user, loading } = useAuth();
-  const [groupId, setGroupId] = useState(null);
 
   if (loading) {
     return <p style={{ margin: 'auto' }}>Loading...</p>;
   }
 
   return (
-    <>
-      {/*groupId ? (<GroupPage groupId={groupId} onBack={() => setGroupId(null)} />) : (<GroupsPage onOpen={setGroupId} />)*/}
+    <Routes>
+      {/* Public route */}
+      <Route
+        path="/login"
+        element={user ? <Navigate to="/dashboard" replace /> : <LoginPage />}
+      />
 
-      <Routes>
-        {/* Public Route */}
-        <Route
-          path="/login"
-          element={user ? <Navigate to="/dashboard" replace /> : <LoginPage />}
-        />
+      {/* Protected routes */}
+      <Route element={<ProtectedRoute />}>
+        <Route path="/dashboard" element={<DashboardLayout />} />
 
-        {/* Protected Routes */}
-        <Route element={<ProtectedRoute />}>
-          <Route path="/dashboard" element={<DashboardLayout />} />
-          <Route path="/home" element={<LandingPage />} />
-          <Route path="/code" element={<ResponseArea />} />
-          <Route path="/codes" element={<SubmissionTimeline />} />
-          <Route path="/coding" element={<CodeEditor />} />
-          <Route path="/code-editor" element={<CodeEditor />} />
-          <Route
-            path="/groups"
-            element={
-              groupId ? (
-                <GroupPage groupId={groupId} onBack={() => setGroupId(null)} />
-              ) : (
-                <GroupsPage onOpen={setGroupId} />
-              )
-            }
-          />
-          {/* Add additional protected routes here (e.g. /profile, /settings) */}
-        </Route>
+        <Route path="/home" element={<LandingPage />} />
 
-        {/* Root redirect */}
-        <Route
-          path="/"
-          element={<Navigate to={user ? '/dashboard' : '/login'} replace />}
-        />
+        <Route path="/code" element={<ResponseArea />} />
 
-        {/* Fallback 404 / Catch-all */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </>
+        <Route path="/codes" element={<SubmissionTimeline />} />
+
+        <Route path="/coding" element={<CodeEditor />} />
+
+        <Route path="/code-editor" element={<CodeEditor />} />
+      </Route>
+
+      {/* Root redirect */}
+      <Route
+        path="/"
+        element={<Navigate to={user ? '/dashboard' : '/login'} replace />}
+      />
+
+      {/* Fallback */}
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
 
 export default function App() {
   return (
-    <>
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
-    </>
+    <AuthProvider>
+      <AppRoutes />
+    </AuthProvider>
   );
 }
