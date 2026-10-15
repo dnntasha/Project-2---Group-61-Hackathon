@@ -1,5 +1,6 @@
 import { React, useState } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import NavBar from './components/NavBar/NavBar.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 import FileTree from './components/FileTree/FileTree.jsx';
 import { AuthProvider, useAuth } from './auth/AuthContext.jsx';
@@ -34,6 +35,16 @@ function DashboardLayout() {
   );
 }
 
+// Shared layout for authenticated pages: nav bar above the page content
+function NavLayout() {
+  return (
+    <>
+      <NavBar />
+      <Outlet />
+    </>
+  );
+}
+
 function AppRoutes() {
   const { user, loading } = useAuth();
   const [groupId, setGroupId] = useState(null);
@@ -55,23 +66,28 @@ function AppRoutes() {
 
         {/* Protected Routes */}
         <Route element={<ProtectedRoute />}>
-          <Route path="/dashboard" element={<DashboardLayout />} />
-          <Route path="/home" element={<LandingPage />} />
-          <Route path="/code" element={<ResponseArea />} />
-          <Route path="/codes" element={<SubmissionTimeline />} />
-          <Route path="/coding" element={<CodeEditor />} />
-          <Route path="/code-editor" element={<CodeEditor />} />
-          <Route
-            path="/groups"
-            element={
-              groupId ? (
-                <GroupPage groupId={groupId} onBack={() => setGroupId(null)} />
-              ) : (
-                <GroupsPage onOpen={setGroupId} />
-              )
-            }
-          />
-          {/* Add additional protected routes here (e.g. /profile, /settings) */}
+          <Route element={<NavLayout />}>
+            <Route path="/dashboard" element={<DashboardLayout />} />
+            <Route path="/home" element={<LandingPage />} />
+            <Route path="/code" element={<ResponseArea />} />
+            <Route path="/codes" element={<SubmissionTimeline />} />
+            <Route path="/coding" element={<CodeEditor />} />
+            <Route path="/code-editor" element={<CodeEditor />} />
+            <Route
+              path="/groups"
+              element={
+                groupId ? (
+                  <GroupPage
+                    groupId={groupId}
+                    onBack={() => setGroupId(null)}
+                  />
+                ) : (
+                  <GroupsPage onOpen={setGroupId} />
+                )
+              }
+            />
+            {/* Add additional protected routes here (e.g. /profile, /settings) */}
+          </Route>
         </Route>
 
         {/* Root redirect */}
