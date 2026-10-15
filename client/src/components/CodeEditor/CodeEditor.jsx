@@ -82,7 +82,6 @@ function getRunOutput(message) {
  *  - problemId: problem identifier sent to the server
  *  - wsUrl:     optional override of the WebSocket URL
  */
-//const data = await api('/groups');
 export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
@@ -105,15 +104,11 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
       setTeamsError('');
 
       try {
-        //FIXME:
-        //
-        //const response = await api('/my-teams');
-        const response = await api('/groups');
+        const response = await api('/my-teams');
 
         if (!active) return;
 
-        //const availableTeams = response.teams || [];
-        const availableTeams = response.groups || [];
+        const availableTeams = response.teams || [];
         setTeams(availableTeams);
 
         const requestedTeamId = /^team-([1-9]\d*)$/.exec(
@@ -419,10 +414,23 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
           setTerminalOutput(message.message);
           break;
 
-        case 'ERROR':
+        // A rejected edit would stay outstanding forever and block all further
+        // syncing of that file, so drop our copy and fetch the server's
+        case 'ERROR': {
           setTerminalOutput(`Editor error: ${message.error}`);
           setIsFileLoading(false);
+          setIsRunning(false);
+          const file = message.filePath
+            ? filesRef.current.get(message.filePath)
+            : null;
+          if (file?.outstanding) {
+            filesRef.current.delete(message.filePath);
+            if (message.filePath === activePathRef.current) {
+              showFile(message.filePath);
+            }
+          }
           break;
+        }
 
         default:
           break;
@@ -436,6 +444,21 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   useEffect(() => {
     let active = true;
     let socket;
+
+    // Start every room from a clean slate so nothing from the previous room
+    // can be edited (and then lost) while the new one connects
+    filesRef.current = new Map();
+    treeRef.current = null;
+    pendingSelectionRef.current = null;
+    activePathRef.current = DEFAULT_FILE;
+    setTree(null);
+    setCode('');
+    setActiveFilePath(DEFAULT_FILE);
+    setIsConnected(false);
+    setIsReady(false);
+    setIsRunning(false);
+    setIsFileLoading(false);
+
     if (!activeRoomId) {
       setIsConnected(false);
       socketRef.current = null;
@@ -483,10 +506,18 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
       if (!active) return;
       setIsConnected(false);
       setIsReady(false);
+      setIsRunning(false);
+      if (event.code === 4001) {
+        setTerminalOutput(
+          'Your sign-in has expired. Sign in again to use the editor.'
+        );
+        window.dispatchEvent(new Event('auth:expired'));
+        return;
+      }
       setTerminalOutput(
-        event.code === 4001
-          ? 'Your sign-in has expired. Sign in again to use the editor.'
-          : 'Disconnected from the editor server.'
+        event.reason
+          ? `Disconnected from the editor server: ${event.reason}`
+          : 'Disconnected from the editor server. Reload the page to reconnect.'
       );
     };
 
@@ -512,10 +543,12 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
     setCode(updatedCode);
     flushFile(filePath);
 
+    // Restored by the layout effect once React has written the new text
     if (cursorPosition !== undefined) {
-      requestAnimationFrame(() => {
-        textareaRef.current?.setSelectionRange(cursorPosition, cursorPosition);
-      });
+      pendingSelectionRef.current = {
+        start: cursorPosition,
+        end: cursorPosition,
+      };
     }
   };
 
@@ -526,16 +559,22 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
 
   // Switches the active file. Files we already hold are shown straight away
   // (the server's broadcasts keep them live); others are requested first.
-  const handleSelectFile = (filePath) => {
-    if (filePath === activePathRef.current) return;
-    showFile(filePath);
-  };
+  const handleSelectFile = useCallback(
+    (filePath) => {
+      if (filePath === activePathRef.current) return;
+      showFile(filePath);
+    },
+    [showFile]
+  );
 
   // Asks the server to create/rename/delete/move a file or folder; the change
   // appears when the server's TREE_UPDATE comes back
-  const handleTreeOperation = (operation) => {
-    sendWsMessage({ type: 'TREE_OPERATION', operation });
-  };
+  const handleTreeOperation = useCallback(
+    (operation) => {
+      sendWsMessage({ type: 'TREE_OPERATION', operation });
+    },
+    [sendWsMessage]
+  );
 
   // Python-friendly editing behaviour: Tab inserts 4 spaces, Backspace removes
   // a whole indent level, and Enter keeps (or adds/removes) indentation.
@@ -579,16 +618,22 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
 
     // Enter -> auto-indent: copy the current line's indentation, add a level
     // after a line ending in ':', and dedent for else/elif/except/finally/case
-    if (event.key !== 'Enter') return;
+    if (
+      event.key !== 'Enter' ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.altKey ||
+      event.nativeEvent.isComposing
+    ) {
+      return;
+    }
     event.preventDefault();
 
     const lineStart = value.lastIndexOf('\n', selectionStart - 1) + 1;
     const lineBeforeCursor = value.slice(lineStart, selectionStart);
     const indentation = lineBeforeCursor.match(/^[\t ]*/)?.[0] || '';
     const trimmedLine = lineBeforeCursor.trimStart();
-    const dedent = /^(?:else|elif\b|except\b|finally\b|case\b)/.test(
-      trimmedLine
-    );
+    const dedent = /^(?:else|elif|except|finally|case)\b/.test(trimmedLine);
     const currentIndent = dedent
       ? indentation.slice(0, Math.max(0, indentation.length - 4))
       : indentation;
@@ -615,6 +660,14 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
       setTerminalOutput('Running Python code...');
     }
   };
+
+  // With no room there is no socket to report on, so say what is needed
+  const statusText =
+    activeRoomId || teamsLoading
+      ? terminalOutput
+      : teamsError
+        ? 'Could not load your teams.'
+        : 'You are not in a team yet. Create or join one on a group page to start coding.';
 
   return (
     <div className="editor page-enter">
@@ -710,7 +763,7 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
           <section className="terminal-panel" aria-label="Execution output">
             <div className="terminal-header">Python output</div>
             <pre className="terminal-content" role="status">
-              {terminalOutput}
+              {statusText}
             </pre>
           </section>
         </main>
