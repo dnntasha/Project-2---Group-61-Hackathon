@@ -26,7 +26,7 @@ import { requireAuth } from './middleware/auth.js';
 
 import { executePython } from './execution/pythonExecutor.js';
 import authRoutes from './routes/auth.js';
-import teamRoutes from './routes/teams.js';
+// import teamRoutes from './routes/teams.js'; // disabled with the teams route below
 import leaderboardRoutes from './routes/leaderboards.js';
 import { authenticate } from './lib/sessions.js';
 import { prisma } from './lib/prisma.js';
@@ -68,6 +68,8 @@ const MAX_CODE_BYTES = 256 * 1024;
 // Stops a room from being flooded with an unbounded number of files
 const MAX_FILES_PER_ROOM = 200;
 const MAX_HISTORY = 1000;
+// TODO: enable once teams are working (room access is currently not restricted to team members)
+const TEAM_ACCESS_ENFORCED = false;
 // Room IDs may only contain letters, digits, underscores and hyphens (1-64 chars)
 const ROOM_ID_PATTERN = /^[\w-]{1,64}$/;
 
@@ -628,7 +630,9 @@ wss.on('connection', async (ws, req) => {
       select: { id: true },
     });
 
-    if (!team) {
+    // broken without teams: set TEAM_ACCESS_ENFORCED to true once teams work
+    //FIXME:
+    if (TEAM_ACCESS_ENFORCED == true && !team) {
       ws.close(1008, 'Team access denied');
       setupDone();
       return;

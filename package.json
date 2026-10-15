@@ -4,14 +4,16 @@
   "type": "commonjs",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "install:all": "npm install --no-fund --no-audit && npm install --prefix server --no-fund --no-audit && npm install --prefix client --no-fund --no-audit && npm run setup:backend",
+    "install:all": "npm install --no-fund --no-audit && npm install --prefix server --no-fund --no-audit && npm install --prefix client --no-fund --no-audit && npm run setup:backend && npm run docker:setup",
     "setup:backend": "npm run --prefix server env:setup && npm run --prefix server db:setup",
     "dev": "node scripts/dev.mjs",
     "dev:server": "npm run dev --prefix server",
     "dev:client": "npm run dev --prefix client",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "prepare": "husky"
+    "prepare": "husky",
+    "docker:setup": "node scripts/docker-check.mjs --setup",
+    "docker:check": "node scripts/docker-check.mjs"
   },
   "lint-staged": {
     "client/src/**/*.{js,jsx}": [

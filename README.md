@@ -14,6 +14,16 @@ run `npm run install:all` from the project root to install all the required depe
 2. Change JWT_SECRET in .env to a long combination of letters
 3. `npm run dev` (on the main root)
 
+## Docker (Python execution)
+
+Python code from the editor and submissions runs in a locked-down Docker container (`python:3.12-slim`), so Docker must be installed (Docker Desktop, Rancher Desktop with the dockerd engine, or Docker Engine on Linux).
+
+- `npm run install:all` runs `npm run docker:setup`, which starts the Docker daemon if it can, pulls the image and runs a test script in the sandbox.
+- `npm run dev` runs the same check first and stops with a clear message if Docker is not working.
+- `npm run docker:check` only verifies (no starting or pulling); `npm run docker:setup` repairs.
+- `ENABLE_PYTHON_EXECUTION=true` in `server/.env` turns execution on; `install:all` adds it to an existing `.env` if missing.
+- Frontend-only work without Docker: set `SKIP_DOCKER_CHECK=1`.
+
 ## If it is not the first time setup
 
 Using the single root script to run the project you can simply run `npm run dev` from the project root to start the project.

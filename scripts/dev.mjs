@@ -7,8 +7,8 @@
  *   npm run dev -- 1 --full  extra client on 3001 with its own backend on 5002
  *                            (fully separate instance, rooms are not shared)
  */
-
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const args = process.argv.slice(2);
 
@@ -36,6 +36,17 @@ const env = {
   API_PORT: String(serverPort),
   CLIENT_PORT: String(clientPort),
 };
+
+// The backend runs Python in Docker: make sure the daemon is up and the image
+// is pulled before starting. SKIP_DOCKER_CHECK=1 skips this (frontend-only work).
+if (full) {
+  const check = spawnSync(
+    process.execPath,
+    [fileURLToPath(new URL('./docker-check.mjs', import.meta.url)), '--setup'],
+    { stdio: 'inherit' }
+  );
+  if (check.status !== 0) process.exit(check.status ?? 1);
+}
 
 const children = [];
 

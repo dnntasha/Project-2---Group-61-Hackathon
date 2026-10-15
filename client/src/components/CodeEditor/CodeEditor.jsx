@@ -82,6 +82,7 @@ function getRunOutput(message) {
  *  - problemId: problem identifier sent to the server
  *  - wsUrl:     optional override of the WebSocket URL
  */
+//const data = await api('/groups');
 export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
@@ -104,11 +105,15 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
       setTeamsError('');
 
       try {
-        const response = await api('/my-teams');
+        //FIXME:
+        //
+        //const response = await api('/my-teams');
+        const response = await api('/groups');
 
         if (!active) return;
 
-        const availableTeams = response.teams || [];
+        //const availableTeams = response.teams || [];
+        const availableTeams = response.groups || [];
         setTeams(availableTeams);
 
         const requestedTeamId = /^team-([1-9]\d*)$/.exec(
