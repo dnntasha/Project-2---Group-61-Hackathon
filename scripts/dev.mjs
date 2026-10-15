@@ -19,9 +19,8 @@ const n = Number(
 const full =
   n === 0 || args.includes('--full');
 
-// Port 5000 is already used by macOS on this machine,
-// so development backends start from 5001.
-const BASE_SERVER_PORT = 5001;
+//if you change these, keep those changes on your local machine
+const BASE_SERVER_PORT = 5000;
 const BASE_CLIENT_PORT = 3000;
 
 const serverPort =
