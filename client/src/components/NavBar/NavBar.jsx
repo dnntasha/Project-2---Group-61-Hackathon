@@ -8,7 +8,7 @@ const FALLBACK = '/dashboard';
 const NAV_ITEMS = [
   { label: 'Home', to: '/home' },
   { label: 'Coding', to: '/coding' },
-  { label: 'Groups', to: FALLBACK },
+  { label: 'Groups', to: '/groups' },
   { label: 'Leaderboard', to: FALLBACK },
   { label: 'Problems', to: FALLBACK },
 ];
