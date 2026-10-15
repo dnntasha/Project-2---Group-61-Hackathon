@@ -1,5 +1,5 @@
 import { React, useState } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
 
 import LoginPage from './pages/LoginPage.jsx';
 import FileTree from './components/FileTree/FileTree.jsx';
@@ -11,6 +11,7 @@ import SubmissionTimeline from './components/SubmissionTimeline/SubmissionTimeli
 import CodeEditor from './components/CodeEditor/CodeEditor.jsx';
 import GroupsPage from './pages/GroupsPage.jsx';
 import GroupPage from './pages/GroupPage.jsx';
+import NavBar from './components/NavBar/NavBar.jsx';
 
 import './App.css';
 
@@ -32,7 +33,6 @@ function DashboardLayout() {
         </button>
       </header>
 
-      {/* Group / team management */}
       <section className="dashboard-groups">
         {groupId ? (
           <GroupPage groupId={groupId} onBack={() => setGroupId(null)} />
@@ -41,11 +41,31 @@ function DashboardLayout() {
         )}
       </section>
 
-      {/* Collaborative editor / file tree */}
       <section className="dashboard-editor">
         <FileTree />
       </section>
     </main>
+  );
+}
+
+// Shared layout for authenticated pages.
+function NavLayout() {
+  return (
+    <>
+      <NavBar />
+      <Outlet />
+    </>
+  );
+}
+
+// Separate groups route, while keeping dashboard groups too.
+function GroupsRoute() {
+  const [groupId, setGroupId] = useState(null);
+
+  return groupId ? (
+    <GroupPage groupId={groupId} onBack={() => setGroupId(null)} />
+  ) : (
+    <GroupsPage onOpen={setGroupId} />
   );
 }
 
@@ -66,17 +86,21 @@ function AppRoutes() {
 
       {/* Protected routes */}
       <Route element={<ProtectedRoute />}>
-        <Route path="/dashboard" element={<DashboardLayout />} />
+        <Route element={<NavLayout />}>
+          <Route path="/dashboard" element={<DashboardLayout />} />
 
-        <Route path="/home" element={<LandingPage />} />
+          <Route path="/home" element={<LandingPage />} />
 
-        <Route path="/code" element={<ResponseArea />} />
+          <Route path="/code" element={<ResponseArea />} />
 
-        <Route path="/codes" element={<SubmissionTimeline />} />
+          <Route path="/codes" element={<SubmissionTimeline />} />
 
-        <Route path="/coding" element={<CodeEditor />} />
+          <Route path="/coding" element={<CodeEditor />} />
 
-        <Route path="/code-editor" element={<CodeEditor />} />
+          <Route path="/code-editor" element={<CodeEditor />} />
+
+          <Route path="/groups" element={<GroupsRoute />} />
+        </Route>
       </Route>
 
       {/* Root redirect */}

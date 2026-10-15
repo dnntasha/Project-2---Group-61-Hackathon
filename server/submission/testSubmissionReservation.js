@@ -36,6 +36,7 @@ try {
       groupId: group.id,
       title: 'Reservation Test Problem',
       description: 'Temporary problem for testing.',
+      orderIndex: 1,
       submissionLimit: 2,
       testCases: {
         create: {
@@ -77,6 +78,7 @@ try {
       groupId: otherGroup.id,
       title: 'Other Group Problem',
       description: 'Must not be accessible to the first team.',
+      orderIndex: 1,
       submissionLimit: 2,
       testCases: {
         create: {

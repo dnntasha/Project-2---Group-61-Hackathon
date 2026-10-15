@@ -106,18 +106,20 @@ export async function reserveSubmission({ userId, teamId, problemId }) {
     WHERE t."id" = ${teamId}
       AND t."leaderId" = ${userId}
       AND p."id" = ${problemId}
-      AND p."submissionLimit" > 0
       AND EXISTS (
         SELECT 1
         FROM "TestCase" AS tc
         WHERE tc."problemId" = p."id"
       )
       AND (
-        SELECT COUNT(*)
-        FROM "Submission" AS s
-        WHERE s."teamId" = t."id"
-          AND s."problemId" = p."id"
-      ) < p."submissionLimit"
+        p."submissionLimit" = 0
+        OR (
+          SELECT COUNT(*)
+          FROM "Submission" AS s
+          WHERE s."teamId" = t."id"
+            AND s."problemId" = p."id"
+        ) < p."submissionLimit"
+      )
     RETURNING "id"
   `;
 

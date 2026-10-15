@@ -129,8 +129,6 @@ export async function executeDockerPythonFile(
     '/app/main.py',
   ];
 
-  let created = false;
-
   try {
     const creation = await dockerCommand(createArgs);
 
@@ -141,8 +139,6 @@ export async function executeDockerPythonFile(
     ) {
       throw new Error(`Docker creation failed: ${creation.stderr}`);
     }
-
-    created = true;
 
     const execution = await dockerCommand(
       ['start', '--attach', '--interactive', containerName],
@@ -156,17 +152,25 @@ export async function executeDockerPythonFile(
       containerName,
     };
   } finally {
-    // Always attempt cleanup, including after execution failure.
-    // Use the unique name even if create returned an error:
-    // Docker may have created the container before the CLI failed.
-    const cleanup = await dockerCommand(
-      ['rm', '--force', containerName],
-      '',
-      10000
-    );
+    // Always attempt to remove the container, including after timeout.
+    try {
+      const cleanup = await dockerCommand(
+        ['rm', '--force', containerName],
+        '',
+        10000
+      );
 
-    if (cleanup.exitCode !== 0 && created) {
-      console.error(`Docker cleanup failed: ${cleanup.stderr}`);
+      if (cleanup.exitCode !== 0 || cleanup.timedOut) {
+        console.error(
+          `Docker cleanup failed for ${containerName}: ${cleanup.stderr}`
+        );
+      }
+    } catch (cleanupError) {
+      // Preserve the original execution error.
+      console.error(
+        `Docker cleanup could not run for ${containerName}:`,
+        cleanupError
+      );
     }
   }
 }

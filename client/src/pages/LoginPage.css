@@ -126,3 +126,58 @@
     color: #f97066;
   }
 }
+
+/* ---- Switching between sign in and create account ---- */
+
+/* The panel keeps its height steady so the card doesn't jump
+   when the confirm-password field appears. */
+.auth-panel {
+  min-height: 430px;
+}
+
+/* Heading and lead text: remounted on switch (key={mode}), so this replays. */
+.auth-intro {
+  animation: auth-swap 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes auth-swap {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* The confirm-password field grows open rather than popping in. */
+.auth-reveal {
+  animation: auth-reveal 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes auth-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* The submit label changes on switch, so cross-fade just the text. */
+.auth-submit span {
+  display: inline-block;
+  animation: fade-in 240ms ease-out both;
+}
+
+/* Anyone who asks for less motion gets the switch with no movement. */
+@media (prefers-reduced-motion: reduce) {
+  .auth-intro,
+  .auth-reveal,
+  .auth-submit span {
+    animation: none;
+  }
+}

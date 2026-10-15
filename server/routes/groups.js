@@ -107,7 +107,8 @@ function validateName(name) {
   return null;
 }
 
-// Create group
+// POST /api/groups
+// Creates a group and makes the creator the admin.
 router.post(
   '/',
   wrap(async (req, res) => {
@@ -140,7 +141,8 @@ router.post(
   })
 );
 
-// Get groups belonging to the current user
+// GET /api/groups
+// Returns groups the current user administers or belongs to.
 router.get(
   '/',
   wrap(async (req, res) => {
@@ -173,7 +175,8 @@ router.get(
   })
 );
 
-// Get pending group invitations for the signed-in user
+// GET /api/groups/invites/pending
+// Returns pending invitations for the current user.
 router.get(
   '/invites/pending',
   wrap(async (req, res) => {
@@ -183,14 +186,7 @@ router.get(
       },
 
       include: {
-        group: {
-          select: {
-            id: true,
-            name: true,
-            iconFile: true,
-            startedAt: true,
-          },
-        },
+        group: true,
       },
 
       orderBy: {
@@ -216,7 +212,44 @@ router.get(
   })
 );
 
-// Get one group including its members
+// GET /api/groups/invites/mine
+// Kept for compatibility with the dev branch UI.
+router.get(
+  '/invites/mine',
+  wrap(async (req, res) => {
+    const invites = await prisma.groupInvite.findMany({
+      where: {
+        userId: req.user.id,
+      },
+
+      include: {
+        group: true,
+      },
+
+      orderBy: {
+        id: 'desc',
+      },
+    });
+
+    return res.json({
+      invites: invites.map((invite) => ({
+        id: invite.id,
+
+        group: {
+          id: invite.group.id,
+          name: invite.group.name,
+          iconUrl: invite.group.iconFile
+            ? `/api/uploads/icons/${invite.group.iconFile}`
+            : null,
+          startedAt: invite.group.startedAt,
+        },
+      })),
+    });
+  })
+);
+
+// GET /api/groups/:groupId
+// Returns one group including its current members.
 router.get(
   '/:groupId',
   requireGroupMember,
@@ -251,13 +284,13 @@ router.get(
       },
     });
 
-    const members = [];
-
-    members.push({
-      id: group.admin.id,
-      username: group.admin.username,
-      isAdmin: true,
-    });
+    const members = [
+      {
+        id: group.admin.id,
+        username: group.admin.username,
+        isAdmin: true,
+      },
+    ];
 
     for (const member of group.members) {
       if (member.user.id === group.admin.id) {
@@ -281,7 +314,72 @@ router.get(
   })
 );
 
-// Update group settings
+// GET /api/groups/:groupId/members
+// Returns the admin, members and, for admins, pending invitations.
+router.get(
+  '/:groupId/members',
+  requireGroupMember,
+  wrap(async (req, res) => {
+    const groupId = req.group.id;
+
+    const [admin, members, invites] = await Promise.all([
+      prisma.user.findUnique({
+        where: {
+          id: req.group.adminId,
+        },
+      }),
+
+      prisma.groupMember.findMany({
+        where: {
+          groupId,
+        },
+
+        include: {
+          user: true,
+        },
+
+        orderBy: {
+          id: 'asc',
+        },
+      }),
+
+      req.isGroupAdmin
+        ? prisma.groupInvite.findMany({
+            where: {
+              groupId,
+            },
+
+            include: {
+              user: true,
+            },
+
+            orderBy: {
+              id: 'asc',
+            },
+          })
+        : [],
+    ]);
+
+    return res.json({
+      admin: {
+        id: admin.id,
+        username: admin.username,
+      },
+
+      members: members.map((member) => ({
+        id: member.user.id,
+        username: member.user.username,
+      })),
+
+      invites: invites.map((invite) => ({
+        id: invite.id,
+        username: invite.user.username,
+      })),
+    });
+  })
+);
+
+// PATCH /api/groups/:groupId/settings
 router.patch(
   '/:groupId/settings',
   requireGroupMember,
@@ -320,7 +418,7 @@ router.patch(
   })
 );
 
-// Upload group icon
+// POST /api/groups/:groupId/icon
 router.post(
   '/:groupId/icon',
   requireGroupMember,
@@ -369,32 +467,43 @@ router.post(
   }
 );
 
-// Send group invitation
+// POST /api/groups/:groupId/invites
+// Supports either username or userId.
 router.post(
   '/:groupId/invites',
   requireGroupMember,
   requireGroupAdmin,
   requireNotStarted,
   wrap(async (req, res) => {
-    const { userId } = req.body;
+    const username = String(req.body?.username ?? '').trim();
+    const rawId = Number(req.body?.userId);
 
-    if (!Number.isInteger(userId)) {
+    if (!username && !Number.isInteger(rawId)) {
       return res.status(400).json({
-        error: 'A valid user must be selected.',
+        error: 'Enter a username or valid user ID to invite.',
       });
     }
 
-    const user = await prisma.user.findUnique({
-      where: {
-        id: userId,
-      },
-    });
+    const user = username
+      ? await prisma.user.findUnique({
+          where: {
+            username,
+          },
+        })
+      : await prisma.user.findUnique({
+          where: {
+            id: rawId,
+          },
+        });
 
     if (!user) {
       return res.status(404).json({
         error: 'User not found.',
       });
     }
+
+    const userId = user.id;
+    const groupId = req.group.id;
 
     if (userId === req.group.adminId) {
       return res.status(409).json({
@@ -405,7 +514,7 @@ router.post(
     const existingMember = await prisma.groupMember.findUnique({
       where: {
         groupId_userId: {
-          groupId: req.group.id,
+          groupId,
           userId,
         },
       },
@@ -420,7 +529,7 @@ router.post(
     const existingInvite = await prisma.groupInvite.findUnique({
       where: {
         groupId_userId: {
-          groupId: req.group.id,
+          groupId,
           userId,
         },
       },
@@ -434,22 +543,80 @@ router.post(
 
     const invite = await prisma.groupInvite.create({
       data: {
-        groupId: req.group.id,
+        groupId,
         userId,
       },
     });
 
-    return res.status(201).json(invite);
+    return res.status(201).json({
+      invite: {
+        id: invite.id,
+        username: user.username,
+      },
+    });
   })
 );
 
-// Start event
+// DELETE /api/groups/:groupId/invites/:inviteId
+// Allows the group admin to cancel an invitation.
+router.delete(
+  '/:groupId/invites/:inviteId',
+  requireGroupMember,
+  requireGroupAdmin,
+  wrap(async (req, res) => {
+    const inviteId = Number(req.params.inviteId);
+
+    if (!Number.isInteger(inviteId)) {
+      return res.status(400).json({
+        error: 'Invalid invitation.',
+      });
+    }
+
+    const { count } = await prisma.groupInvite.deleteMany({
+      where: {
+        id: inviteId,
+        groupId: req.group.id,
+      },
+    });
+
+    if (count === 0) {
+      return res.status(404).json({
+        error: 'Invite not found.',
+      });
+    }
+
+    return res.json({
+      ok: true,
+    });
+  })
+);
+
+// POST /api/groups/:groupId/start
 router.post(
   '/:groupId/start',
   requireGroupMember,
   requireGroupAdmin,
   requireNotStarted,
   wrap(async (req, res) => {
+    // Dev added this validation. Keep it.
+    const problemCount = await prisma.problem.count({
+      where: {
+        groupId: req.group.id,
+      },
+    });
+
+    if (problemCount === 0) {
+      return res.status(409).json({
+        error: 'Add at least one problem before starting the event.',
+      });
+    }
+
+    if (req.group.topK > problemCount) {
+      return res.status(409).json({
+        error: `Scored problems (${req.group.topK}) cannot be more than the ${problemCount} problem(s) you have defined.`,
+      });
+    }
+
     const { count } = await prisma.group.updateMany({
       where: {
         id: req.group.id,
@@ -479,11 +646,17 @@ router.post(
   })
 );
 
-// Accept group invitation
+// POST /api/groups/invites/:inviteId/accept
 router.post(
   '/invites/:inviteId/accept',
   wrap(async (req, res) => {
     const inviteId = Number(req.params.inviteId);
+
+    if (!Number.isInteger(inviteId)) {
+      return res.status(400).json({
+        error: 'Invalid invitation.',
+      });
+    }
 
     const invite = await prisma.groupInvite.findUnique({
       where: {
@@ -513,6 +686,27 @@ router.post(
       });
     }
 
+    const existingMember = await prisma.groupMember.findUnique({
+      where: {
+        groupId_userId: {
+          groupId: invite.groupId,
+          userId: req.user.id,
+        },
+      },
+    });
+
+    if (existingMember) {
+      await prisma.groupInvite.delete({
+        where: {
+          id: inviteId,
+        },
+      });
+
+      return res.status(409).json({
+        error: 'You are already a member of this group.',
+      });
+    }
+
     const membership = await prisma.$transaction(async (tx) => {
       const newMember = await tx.groupMember.create({
         data: {
@@ -534,11 +728,17 @@ router.post(
   })
 );
 
-// Decline group invitation
+// POST /api/groups/invites/:inviteId/decline
 router.post(
   '/invites/:inviteId/decline',
   wrap(async (req, res) => {
     const inviteId = Number(req.params.inviteId);
+
+    if (!Number.isInteger(inviteId)) {
+      return res.status(400).json({
+        error: 'Invalid invitation.',
+      });
+    }
 
     const invite = await prisma.groupInvite.findUnique({
       where: {

@@ -1,0 +1,183 @@
+/* Problems and test cases. Uses the colour tokens from index.css. */
+.problem-list {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  display: grid;
+  gap: 12px;
+  counter-reset: problem;
+}
+
+.problem-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  counter-increment: problem;
+}
+
+.problem-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-h);
+}
+
+.problem-head strong::before {
+  content: counter(problem) '. ';
+  color: var(--text);
+  font-weight: 400;
+}
+
+.problem-actions {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.link-button.danger {
+  color: #d92d20;
+}
+
+.link-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.problem-desc {
+  margin: 8px 0;
+  white-space: pre-wrap;
+}
+
+.problem-formats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin: 10px 0;
+}
+
+.problem-formats dt {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.problem-formats dd {
+  margin: 2px 0 0;
+  color: var(--text-h);
+  white-space: pre-wrap;
+}
+
+/* ---- Test cases ---- */
+.test-block {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.test-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.test-table th {
+  text-align: left;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  padding: 4px 8px 4px 0;
+}
+
+.test-table td {
+  vertical-align: top;
+  padding: 6px 8px 6px 0;
+  border-top: 1px solid var(--border);
+  color: var(--text-h);
+}
+
+.test-table pre {
+  margin: 0;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 22ch;
+}
+
+/* ---- Add forms ---- */
+.problem-add,
+.test-add {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  justify-items: start;
+}
+
+.problem-add h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-h);
+}
+
+.problem-add label,
+.test-add label {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-h);
+}
+
+.problem-add label.narrow,
+.test-add label.narrow {
+  max-width: 260px;
+}
+
+.problem-add input,
+.problem-add textarea,
+.test-add input,
+.test-add textarea {
+  font: inherit;
+  color: var(--text-h);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.problem-add textarea,
+.test-add textarea {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 14px;
+  resize: vertical;
+}
+
+.problem-add input:focus-visible,
+.problem-add textarea:focus-visible,
+.test-add input:focus-visible,
+.test-add textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+label.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 400;
+}
+
+label.checkbox input {
+  width: auto;
+}
+
+@media (prefers-color-scheme: dark) {
+  .link-button.danger {
+    color: #f97066;
+  }
+}
