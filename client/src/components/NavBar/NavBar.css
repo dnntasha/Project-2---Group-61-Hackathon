@@ -56,3 +56,19 @@
   color: var(--accent);
   border-bottom-color: var(--accent);
 }
+
+/* Pending-invitation count shown next to the Groups link */
+.navbar-badge {
+  display: inline-block;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #e5484d;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}

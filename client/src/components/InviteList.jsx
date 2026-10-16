@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import GroupIcon from './GroupIcon.jsx';
+import { useNotifications } from '../notifications/NotificationsContext.jsx';
 import './GroupMembers.css';
 
 // The signed-in user's pending group invitations, with Accept and Decline.
@@ -10,11 +11,15 @@ export default function InviteList({ onAccepted }) {
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState(null);
 
+  // `tick` changes whenever the server pushes an invite change, so listing it
+  // as a dependency re-runs this fetch and the list updates without a refresh
+  const { tick } = useNotifications();
+
   useEffect(() => {
     api('/groups/invites/mine')
       .then((data) => setInvites(data.invites))
       .catch((err) => setError(err.message));
-  }, []);
+  }, [tick]);
 
   async function answer(invite, action) {
     setError('');
