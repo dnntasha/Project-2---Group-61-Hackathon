@@ -148,6 +148,9 @@ export function sandboxArgs(
   return [
     '--label',
     SANDBOX_LABEL,
+    // Never download an image while grading: it must already be installed
+    '--pull',
+    'never',
     '--network',
     'none',
     '--memory',
@@ -159,6 +162,23 @@ export function sandboxArgs(
     '--pids-limit',
     '64',
     '--read-only',
+    // The only writable place: a small scratch area that cannot run programs
+    '--tmpfs',
+    '/tmp:rw,noexec,nosuid,size=16m',
+    // No more than 64 open files, no files over 16 MB, no core dumps
+    '--ulimit',
+    'nofile=64:64',
+    '--ulimit',
+    'fsize=16777216:16777216',
+    '--ulimit',
+    'core=0',
+    // No shared memory with the host or other containers
+    '--ipc',
+    'none',
+    // Never keep (potentially huge) program output in Docker's log files; the
+    // output is read from the attached streams instead
+    '--log-driver',
+    'none',
     '--cap-drop',
     'ALL',
     '--security-opt',
