@@ -121,14 +121,13 @@ function FileTree({
   }
 
   // Renames a node while excluding that node itself from duplicate-name checks.
-  function handleRename(nodeId, currentName) {
-    const newName = window.prompt('Enter new name:', currentName);
+  // The new name comes from the inline editor in FileTreeNode.
+  function handleRename(nodeId, currentName, newName) {
+    const trimmedName = newName.trim();
 
-    if (newName === null) {
+    if (trimmedName === currentName) {
       return;
     }
-
-    const trimmedName = newName.trim();
 
     if (!isValidNodeName(trimmedName)) {
       window.alert('Please enter a valid name.');

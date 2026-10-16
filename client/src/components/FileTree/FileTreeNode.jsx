@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 /**
  * Recursively renders one node in the file tree.
@@ -6,6 +6,9 @@ import { useState } from 'react';
  * Directories can be expanded/collapsed and recursively render their children.
  * File operations are passed down from FileTree so that all modifications are
  * applied to the single tree state owned by the parent component.
+ *
+ * Clicking an entry opens a file / toggles a folder; double-clicking its name
+ * (or pressing F2) turns the name into an input for renaming.
  *
  * The root node cannot be moved or deleted.
  */
@@ -22,47 +25,121 @@ function FileTreeNode({
   path,
 }) {
   const [isOpen, setIsOpen] = useState(true);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [draftName, setDraftName] = useState(node.name);
+  const inputRef = useRef(null);
+  // Enter/Escape unmount the input, which fires blur; this stops a second commit
+  const finishedRef = useRef(false);
 
   const isDirectory = node.type === 'directory';
   const nodePath =
     node.id === 'root' ? '' : path ? `${path}/${node.name}` : node.name;
+  const isSelected = !isDirectory && nodePath === selectedPath;
+
+  useEffect(() => {
+    if (isRenaming) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [isRenaming]);
+
+  function startRenaming() {
+    if (readOnly) {
+      return;
+    }
+
+    finishedRef.current = false;
+    setDraftName(node.name);
+    setIsRenaming(true);
+  }
+
+  function finishRenaming(commit) {
+    if (finishedRef.current) {
+      return;
+    }
+
+    finishedRef.current = true;
+    setIsRenaming(false);
+
+    if (commit) {
+      onRename(node.id, node.name, draftName);
+    }
+  }
+
+  function handleClick() {
+    if (isRenaming) {
+      return;
+    }
+
+    if (isDirectory) {
+      setIsOpen((current) => !current);
+    } else {
+      onSelectFile?.(nodePath);
+    }
+  }
+
+  function handleKeyDown(event) {
+    if (isRenaming || event.target !== event.currentTarget) {
+      return;
+    }
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      handleClick();
+    } else if (event.key === 'F2') {
+      event.preventDefault();
+      startRenaming();
+    }
+  }
 
   return (
     <div className="file-tree-node">
-      <div className="file-tree-row">
-        {isDirectory ? (
-          <button
-            type="button"
-            className="file-tree-toggle"
-            onClick={() => setIsOpen((current) => !current)}
-          >
-            {isOpen ? '▼' : '▶'}
-          </button>
-        ) : (
-          <span className="file-tree-toggle-placeholder" />
-        )}
+      <div className={`file-tree-entry${isSelected ? ' selected' : ''}`}>
+        <div
+          className="file-tree-main"
+          role="button"
+          tabIndex={0}
+          aria-current={isSelected ? 'true' : undefined}
+          onClick={handleClick}
+          onKeyDown={handleKeyDown}
+        >
+          <span className="file-tree-toggle" aria-hidden="true">
+            {isDirectory ? (isOpen ? '▼' : '▶') : ''}
+          </span>
 
-        <span>{isDirectory ? '📁' : '📄'}</span>
+          <span aria-hidden="true">{isDirectory ? '📁' : '📄'}</span>
 
-        {isDirectory /*This block of code allows us to be able to select different files to edit*/ ? (
-          <span>{node.name}</span>
-        ) : (
-          <button
-            type="button"
-            className={`file-tree-file${nodePath === selectedPath ? ' selected' : ''}`}
-            aria-current={nodePath === selectedPath ? 'true' : undefined}
-            onClick={() => onSelectFile?.(nodePath)}
-          >
-            {node.name}
-          </button>
-        )}
+          {isRenaming ? (
+            <input
+              ref={inputRef}
+              className="file-tree-rename-input"
+              value={draftName}
+              onChange={(event) => setDraftName(event.target.value)}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+
+                if (event.key === 'Enter') {
+                  finishRenaming(true);
+                } else if (event.key === 'Escape') {
+                  finishRenaming(false);
+                }
+              }}
+              onBlur={() => finishRenaming(true)}
+            />
+          ) : (
+            <span
+              className="file-tree-name"
+              title={readOnly ? undefined : 'Double-click to rename'}
+              onDoubleClick={startRenaming}
+            >
+              {node.name}
+            </span>
+          )}
+        </div>
 
         {!readOnly && (
-          <>
-            <button type="button" onClick={() => onRename(node.id, node.name)}>
-              Rename
-            </button>
-
+          <div className="file-tree-actions">
             {node.id !== 'root' && (
               <button type="button" onClick={() => onMove(node.id)}>
                 Move
@@ -92,7 +169,7 @@ function FileTreeNode({
                 </button>
               </>
             )}
-          </>
+          </div>
         )}
       </div>
 
