@@ -15,7 +15,8 @@ export default function Countdown({ endsAt, serverTime, onEnd }) {
   const [offset] = useState(() =>
     serverTime ? new Date(serverTime).getTime() - Date.now() : 0
   );
-  const end = new Date(endsAt).getTime();
+  // NaN when endsAt is missing; nothing is shown in that case
+  const end = endsAt ? new Date(endsAt).getTime() : NaN;
   const [remaining, setRemaining] = useState(() => end - (Date.now() + offset));
 
   const onEndRef = useRef(onEnd);
@@ -24,6 +25,7 @@ export default function Countdown({ endsAt, serverTime, onEnd }) {
   }, [onEnd]);
 
   useEffect(() => {
+    if (!Number.isFinite(end)) return undefined;
     const timer = setInterval(() => {
       const left = end - (Date.now() + offset);
       setRemaining(left);
@@ -34,6 +36,8 @@ export default function Countdown({ endsAt, serverTime, onEnd }) {
     }, 1000);
     return () => clearInterval(timer);
   }, [end, offset]);
+
+  if (!Number.isFinite(end)) return null;
 
   if (remaining <= 0) {
     return <p className="countdown countdown-ended">Event ended</p>;

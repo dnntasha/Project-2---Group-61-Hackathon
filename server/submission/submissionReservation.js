@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import { isAcceptingSubmissions } from '../lib/eventTime.js';
 
 /**
  * Checks whether a team may submit a solution to a problem.
@@ -26,6 +27,7 @@ export async function checkSubmissionEligibility({
 
   const team = await prisma.team.findUnique({
     where: { id: teamId },
+    include: { group: { select: { startedAt: true, durationMin: true } } },
   });
 
   if (!team) {
@@ -44,9 +46,17 @@ export async function checkSubmissionEligibility({
     };
   }
 
+  if (!isAcceptingSubmissions(team.group)) {
+    return {
+      success: false,
+      status: 409,
+      error: 'Submissions are only accepted while the event is running.',
+    };
+  }
+
   const problem = await prisma.problem.findUnique({
     where: { id: problemId },
-    include: { testCases: true },
+    include: { _count: { select: { testCases: true } } },
   });
 
   if (!problem || problem.groupId !== team.groupId) {
@@ -57,7 +67,7 @@ export async function checkSubmissionEligibility({
     };
   }
 
-  if (problem.testCases.length === 0) {
+  if (problem._count.testCases === 0) {
     return {
       success: false,
       status: 409,
@@ -77,10 +87,10 @@ export async function checkSubmissionEligibility({
 /**
  * Atomically reserves one submission attempt.
  *
- * All eligibility and submission-limit checks happen inside
+ * All eligibility, event-window and submission-limit checks happen inside
  * a single SQLite INSERT statement.
  *
- * A FAILED submission still counts as an attempt.
+ * FAILED submissions (grading infrastructure errors) don't count as attempts.
  */
 export async function reserveSubmission({ userId, teamId, problemId }) {
   if (
@@ -98,14 +108,21 @@ export async function reserveSubmission({ userId, teamId, problemId }) {
     };
   }
 
+  // Prisma stores DateTime columns as integer milliseconds in SQLite, so
+  // createdAt is written the same way (the column default would store text,
+  // which sorts and compares differently)
+  const now = Date.now();
   const inserted = await prisma.$queryRaw`
-    INSERT INTO "Submission" ("teamId", "problemId", "status")
-    SELECT t."id", p."id", 'PENDING'
+    INSERT INTO "Submission" ("teamId", "problemId", "status", "createdAt")
+    SELECT t."id", p."id", 'PENDING', ${now}
     FROM "Team" AS t
     JOIN "Problem" AS p ON p."groupId" = t."groupId"
+    JOIN "Group" AS g ON g."id" = t."groupId"
     WHERE t."id" = ${teamId}
       AND t."leaderId" = ${userId}
       AND p."id" = ${problemId}
+      AND g."startedAt" IS NOT NULL
+      AND ${now} < g."startedAt" + g."durationMin" * 60000
       AND EXISTS (
         SELECT 1
         FROM "TestCase" AS tc
@@ -118,6 +135,7 @@ export async function reserveSubmission({ userId, teamId, problemId }) {
           FROM "Submission" AS s
           WHERE s."teamId" = t."id"
             AND s."problemId" = p."id"
+            AND s."status" <> 'FAILED'
         ) < p."submissionLimit"
       )
     RETURNING "id"
@@ -135,7 +153,8 @@ export async function reserveSubmission({ userId, teamId, problemId }) {
   return {
     success: true,
     status: 201,
-    submissionId: inserted[0].id,
+    // Raw queries may return integer columns as BigInt
+    submissionId: Number(inserted[0].id),
     message: 'Submission attempt reserved successfully.',
   };
 }

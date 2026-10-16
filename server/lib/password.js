@@ -10,7 +10,11 @@ export async function hashPassword(password) {
 }
 
 export async function verifyPassword(password, stored) {
-  const [salt, hashHex] = stored.split(':');
+  const [salt, hashHex] = String(stored ?? '').split(':');
+  if (!salt || !hashHex) return false;
+
   const hash = await scryptAsync(password, salt, 64);
-  return timingSafeEqual(hash, Buffer.from(hashHex, 'hex'));
+  const expected = Buffer.from(hashHex, 'hex');
+  // timingSafeEqual throws on a length mismatch (corrupt stored hash)
+  return expected.length === hash.length && timingSafeEqual(hash, expected);
 }

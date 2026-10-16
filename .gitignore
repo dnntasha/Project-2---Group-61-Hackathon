@@ -1,7 +1,5 @@
 node_modules/
 .env
-server/.env.example
-.env.example
 *.log
 TODO.md
 build/
@@ -12,3 +10,4 @@ devNotes.md
 *.db-journal
 .vscode
 server/uploads/
+server/prisma/shadow.db

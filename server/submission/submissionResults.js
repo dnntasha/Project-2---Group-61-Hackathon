@@ -54,6 +54,19 @@ export async function completeSubmission({ submissionId, scoreP, scoreT }) {
 }
 
 /**
+ * Grading runs inside the server process, so any submission still PENDING
+ * when the server starts was interrupted (e.g. by a restart) and will never
+ * finish. Marks those as FAILED so they don't count as attempts.
+ */
+export async function failInterruptedSubmissions() {
+  const result = await prisma.submission.updateMany({
+    where: { status: 'PENDING' },
+    data: { status: 'FAILED' },
+  });
+  return result.count;
+}
+
+/**
  * Marks a pending submission as failed if grading cannot complete.
  */
 export async function failSubmission({ submissionId }) {

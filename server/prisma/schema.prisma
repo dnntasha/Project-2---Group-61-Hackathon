@@ -27,6 +27,8 @@ model Session {
   userId       Int
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   lastActivity DateTime @default(now())
+
+  @@index([userId])
 }
 
 model Group {
@@ -71,8 +73,19 @@ model Team {
   members     TeamMember[]
   invites     TeamInvite[]
   submissions Submission[]
+  files TeamFile[]
+  fileTree String?
 
   @@unique([groupId, name])
+}
+
+model TeamFile {
+  id      Int    @id @default(autoincrement())
+  teamId  Int
+  path    String
+  content String
+  team    Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  @@unique([teamId, path])
 }
 
 model TeamMember {
@@ -97,6 +110,7 @@ model TeamInvite {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([teamId, userId])
+  @@index([userId])
 }
 
 model GroupInvite {
@@ -109,6 +123,7 @@ model GroupInvite {
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([groupId, userId])
+  @@index([userId])
 }
 
 //The programing challenge defined by the admin

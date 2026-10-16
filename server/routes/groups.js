@@ -175,45 +175,8 @@ router.get(
   })
 );
 
-// GET /api/groups/invites/pending
-// Returns pending invitations for the current user.
-router.get(
-  '/invites/pending',
-  wrap(async (req, res) => {
-    const invites = await prisma.groupInvite.findMany({
-      where: {
-        userId: req.user.id,
-      },
-
-      include: {
-        group: true,
-      },
-
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
-
-    return res.json({
-      invites: invites.map((invite) => ({
-        id: invite.id,
-        createdAt: invite.createdAt,
-
-        group: {
-          id: invite.group.id,
-          name: invite.group.name,
-          iconUrl: invite.group.iconFile
-            ? `/api/uploads/icons/${invite.group.iconFile}`
-            : null,
-          startedAt: invite.group.startedAt,
-        },
-      })),
-    });
-  })
-);
-
 // GET /api/groups/invites/mine
-// Kept for compatibility with the dev branch UI.
+// Returns pending group invitations for the current user.
 router.get(
   '/invites/mine',
   wrap(async (req, res) => {

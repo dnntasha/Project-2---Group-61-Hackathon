@@ -1,7 +1,11 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { hashPassword, verifyPassword } from '../lib/password.js';
-import { createSession, destroySession } from '../lib/sessions.js';
+import {
+  createSession,
+  destroySession,
+  signSessionToken,
+} from '../lib/sessions.js';
 import { requireAuth } from '../middleware/auth.js';
 
 const router = Router();
@@ -27,10 +31,17 @@ router.post(
     if (error) return res.status(400).json({ error });
 
     try {
+      // The user and its first session are created together, so a failure
+      // can't leave the username taken without the user being signed in
       const user = await prisma.user.create({
-        data: { username, passwordHash: await hashPassword(password) },
+        data: {
+          username,
+          passwordHash: await hashPassword(password),
+          sessions: { create: {} },
+        },
+        include: { sessions: true },
       });
-      const token = await createSession(user.id);
+      const token = signSessionToken(user.sessions[0]);
       res.status(201).json({ token, user: { id: user.id, username } });
     } catch (err) {
       if (err.code === 'P2002') {
