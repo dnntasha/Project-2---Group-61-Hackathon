@@ -94,7 +94,15 @@ Ports are fixed in `scripts/dev.mjs` (backend 5000, client 3000). If you need di
 
 ### Database
 
-There are no migration files. The schema in `server/prisma/schema.prisma` is applied with `prisma db push`.
+The schema lives in `server/prisma/schema.prisma`, with its history in `server/prisma/migrations/`. Local setup applies the schema with `prisma db push`.
+
+When you change the schema, also add a migration for it. To generate the SQL without touching your database, run this from `server/`:
+
+```bash
+npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url file:./shadow.db --script
+```
+
+Save the output as `prisma/migrations/<timestamp>_<name>/migration.sql`, then delete `shadow.db`. The same command with `--exit-code` in place of `--script` prints "No difference detected." when the migrations and schema match.
 
 - After pulling schema changes: `npm run setup:backend`
 - To start over with an empty database: stop the server, delete `server/prisma/dev.db`, then run `npm run setup:backend`.
