@@ -29,6 +29,8 @@
 import { setInterval } from 'node:timers';
 import express from 'express';
 import http from 'http';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { requireAuth } from './middleware/auth.js';
 import { rateLimit } from './middleware/rateLimit.js';
@@ -322,6 +324,19 @@ app.post('/api/submit', requireAuth, submitLimiter, async (req, res) => {
 app.use('/api', (req, res) => {
   res.status(404).json({ error: 'Not found.' });
 });
+
+// Production: after `npm run build` the built client in client/dist is served
+// by this same server, so one process (and one port) runs the whole site.
+// Any other path gets index.html so the client-side router can handle it. In
+// development the Vite dev server serves the client instead and none of this
+// is used.
+const CLIENT_DIST = fileURLToPath(new URL('../client/dist', import.meta.url));
+if (existsSync(`${CLIENT_DIST}/index.html`)) {
+  app.use(express.static(CLIENT_DIST));
+  app.get('*', (req, res) => {
+    res.sendFile(`${CLIENT_DIST}/index.html`);
+  });
+}
 
 // Shared error handler.
 // Keep this after the HTTP routes so route errors can reach it.
