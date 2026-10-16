@@ -40,6 +40,7 @@ import teamRoutes from './routes/teams.js';
 import leaderboardRoutes from './routes/leaderboards.js';
 import { authenticate, startSessionCleanup } from './lib/sessions.js';
 import { prisma } from './lib/prisma.js';
+import { roomToCodebase } from './lib/roomCodebase.js';
 
 import { processSubmission } from './submission/submissionService.js';
 import { failInterruptedSubmissions } from './submission/submissionResults.js';
@@ -220,8 +221,8 @@ app.post('/api/execute', requireAuth, executeLimiter, async (req, res) => {
  * Authenticated team submission endpoint.
  *
  * The submission service:
- * - Validates the codebase.
  * - Checks team leadership and problem eligibility.
+ * - Loads the team's own saved codebase and validates it.
  * - Atomically reserves an attempt.
  * - Loads trusted test cases from the database.
  * - Evaluates the submitted codebase.
@@ -238,7 +239,8 @@ app.post('/api/submit', requireAuth, submitLimiter, async (req, res) => {
       error: 'Submission grading is not yet available.',
     });
   }
-  const { teamId, problemId, codebase } = req.body;
+  // The code is never taken from the request: the team's saved room is graded
+  const { teamId, problemId } = req.body ?? {};
 
   if (
     !Number.isInteger(teamId) ||
@@ -257,7 +259,7 @@ app.post('/api/submit', requireAuth, submitLimiter, async (req, res) => {
       userId: req.user.id,
       teamId,
       problemId,
-      codebase,
+      loadCodebase: () => getTeamCodebase(teamId),
     });
 
     return res.status(result.status).json(result);
@@ -450,6 +452,13 @@ function scheduleSave(room) {
 // Saves every room with unsaved changes and waits for the writes to finish
 function flushAllRooms() {
   return Promise.all([...rooms.values()].map((room) => saveRoomNow(room)));
+}
+
+// The team's saved work as a codebase tree for grading: the live room if
+// someone has it open, otherwise what the database holds
+async function getTeamCodebase(teamId) {
+  const room = rooms.get(`team-${teamId}`) ?? (await loadRoomState(teamId));
+  return roomToCodebase(room.tree, room.files);
 }
 
 // Sends a JSON message to one client, skipping sockets that are no longer open
