@@ -180,23 +180,29 @@ export function sandboxArgs(
   ];
 }
 
-// Time the program itself ran, from Docker's own start/finish timestamps
-// (nanosecond precision), or null if they are unavailable
-async function containerRuntimeMs(containerName) {
+// What Docker recorded about a finished container: how long the program ran
+// (from Docker's own start/finish timestamps, nanosecond precision, or null if
+// they are unavailable) and whether the kernel killed it for using too much
+// memory. The latter is the only way to tell an out-of-memory kill from the
+// program crashing, since both look like a non-zero exit code.
+async function inspectContainer(containerName) {
   try {
     const inspect = await dockerCommand([
       'inspect',
       '--format',
-      '{{.State.StartedAt}} {{.State.FinishedAt}}',
+      '{{.State.OOMKilled}} {{.State.StartedAt}} {{.State.FinishedAt}}',
       containerName,
     ]);
-    if (inspect.exitCode !== 0) return null;
+    if (inspect.exitCode !== 0) return { runtimeMs: null, oomKilled: false };
 
-    const [started, finished] = inspect.stdout.trim().split(' ').map(toMs);
-    const runtime = finished - started;
-    return Number.isFinite(runtime) && runtime >= 0 ? runtime : null;
+    const [oomKilled, started, finished] = inspect.stdout.trim().split(' ');
+    const runtime = toMs(finished) - toMs(started);
+    return {
+      runtimeMs: Number.isFinite(runtime) && runtime >= 0 ? runtime : null,
+      oomKilled: oomKilled === 'true',
+    };
   } catch {
-    return null;
+    return { runtimeMs: null, oomKilled: false };
   }
 }
 
@@ -290,7 +296,8 @@ async function runContainer(stdin, timeoutMs, cwd, options) {
     );
     const wallClockMs = performance.now() - started;
 
-    const runtimeMs = (await containerRuntimeMs(containerName)) ?? wallClockMs;
+    const details = await inspectContainer(containerName);
+    const runtimeMs = details.runtimeMs ?? wallClockMs;
 
     return {
       stdout: execution.stdout,
@@ -302,6 +309,7 @@ async function runContainer(stdin, timeoutMs, cwd, options) {
         execution.exitCode === TIMEOUT_EXIT_CODE ||
         (execution.exitCode === 137 && runtimeMs >= timeoutMs),
       outputExceeded: execution.outputExceeded,
+      oomKilled: details.oomKilled,
       runtimeMs,
     };
   } finally {

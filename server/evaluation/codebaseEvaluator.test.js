@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import {
+  classifyExecutionFailure,
   evaluateCodebase,
+  formatTestResult,
   normaliseOutput,
   validateCodebaseTree,
 } from './codebaseEvaluator.js';
@@ -170,5 +172,143 @@ test(
     );
 
     assert.equal(report.results[0].reason, 'Runtime error.');
+  }
+);
+
+const ran = (overrides = {}) => ({
+  exitCode: 0,
+  stdout: '',
+  stderr: '',
+  timedOut: false,
+  outputExceeded: false,
+  oomKilled: false,
+  runtimeMs: 10,
+  ...overrides,
+});
+
+test('classifies how a run failed', () => {
+  assert.equal(classifyExecutionFailure(ran()), null);
+  assert.equal(
+    classifyExecutionFailure(ran({ timedOut: true, exitCode: 124 })),
+    'Time limit exceeded.'
+  );
+  assert.equal(
+    classifyExecutionFailure(ran({ outputExceeded: true })),
+    'Output limit exceeded.'
+  );
+  // Killed by the kernel for using too much memory (exit code 137)
+  assert.equal(
+    classifyExecutionFailure(ran({ exitCode: 137, oomKilled: true })),
+    'Memory limit exceeded.'
+  );
+  assert.equal(
+    classifyExecutionFailure(
+      ran({ exitCode: 1, stderr: 'Traceback...\nMemoryError\n' })
+    ),
+    'Memory limit exceeded.'
+  );
+  assert.equal(
+    classifyExecutionFailure(
+      ran({ exitCode: 1, stderr: "RuntimeError: can't start new thread" })
+    ),
+    'Process limit exceeded.'
+  );
+  assert.equal(
+    classifyExecutionFailure(ran({ exitCode: 1, stderr: 'ValueError: x' })),
+    'Runtime error.'
+  );
+});
+
+test('a failing hidden test never reveals its data', () => {
+  const hiddenCase = {
+    input: 'secret input',
+    expectedOutput: 'secret answer',
+    hidden: true,
+  };
+  const failure = formatTestResult(hiddenCase, {
+    passed: false,
+    runtimeMs: 12,
+    reason: 'Incorrect output.',
+    stdout: 'what the program printed',
+    stderr: 'Traceback with secret answer',
+  });
+
+  assert.deepEqual(failure, {
+    passed: false,
+    hidden: true,
+    runtimeMs: 12,
+    reason: 'Incorrect output.',
+  });
+  assert.doesNotMatch(JSON.stringify(failure), /secret|printed/);
+});
+
+test('a failing visible test shows its input, and outputs on a mismatch', () => {
+  const visibleCase = { input: '1', expectedOutput: '2', hidden: false };
+
+  assert.deepEqual(
+    formatTestResult(visibleCase, {
+      passed: false,
+      runtimeMs: 5,
+      reason: 'Incorrect output.',
+      stdout: '3',
+    }),
+    {
+      passed: false,
+      hidden: false,
+      runtimeMs: 5,
+      reason: 'Incorrect output.',
+      input: '1',
+      expectedOutput: '2',
+      actualOutput: '3',
+    }
+  );
+
+  // A crash shows the input but no expected or produced output
+  const crash = formatTestResult(visibleCase, {
+    passed: false,
+    runtimeMs: 5,
+    reason: 'Runtime error.',
+    stdout: '3',
+  });
+  assert.equal(crash.input, '1');
+  assert.equal(crash.expectedOutput, undefined);
+  assert.equal(crash.actualOutput, undefined);
+});
+
+test(
+  'a program using too much memory is reported as such',
+  { skip: skipWithoutDocker },
+  async () => {
+    const source = [
+      'def main():',
+      "    data = 'a' * (1024 * 1024 * 1024)",
+      '    print(len(data))',
+      '',
+    ].join('\n');
+    const report = await evaluateCodebase(project(file('main.py', source)), [
+      tests[0],
+    ]);
+
+    assert.equal(report.passed, false);
+    assert.equal(report.results[0].reason, 'Memory limit exceeded.');
+  }
+);
+
+test(
+  'a program starting too many threads hits the process limit',
+  { skip: skipWithoutDocker },
+  async () => {
+    const source = [
+      'import threading, time',
+      'def main():',
+      '    for _ in range(500):',
+      '        threading.Thread(target=time.sleep, args=(3,)).start()',
+      '',
+    ].join('\n');
+    const report = await evaluateCodebase(project(file('main.py', source)), [
+      { ...tests[0], timeLimit: 8000 },
+    ]);
+
+    assert.equal(report.results[0].reason, 'Process limit exceeded.');
   }
 );

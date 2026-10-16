@@ -175,6 +175,44 @@ export function normaliseOutput(text) {
     .trimEnd();
 }
 
+// Python reports these when the container's process limit stops it from
+// starting another thread or process
+const PROCESS_LIMIT_PATTERN =
+  /can't start new thread|Resource temporarily unavailable|BlockingIOError/;
+
+/**
+ * Names why a run was stopped or crashed, or returns null if it ran to a
+ * normal finish. The checks go from the most specific cause to the least, so
+ * the team is told what actually went wrong:
+ *  - the sandbox's own limits (time, output, memory, processes), which are the
+ *    "security responses" the spec counts as failures,
+ *  - a main.py without a callable main(),
+ *  - any other crash.
+ * The time limit itself is enforced inside the container by `timeout`, which
+ * is what sets `timedOut`. The measured runtime is not compared with it again
+ * because it also covers process start-up, so a program finishing right at the
+ * limit would be failed by that overhead.
+ */
+export function classifyExecutionFailure(execution) {
+  if (execution.timedOut) return 'Time limit exceeded.';
+  if (execution.outputExceeded) return 'Output limit exceeded.';
+  if (execution.oomKilled || /MemoryError/.test(execution.stderr ?? '')) {
+    return 'Memory limit exceeded.';
+  }
+  if (
+    execution.exitCode === NO_MAIN_EXIT_CODE &&
+    (execution.stderr ?? '').includes(NO_MAIN_MARKER)
+  ) {
+    return MAIN_UNDEFINED_REASON;
+  }
+  if (execution.exitCode !== 0) {
+    return PROCESS_LIMIT_PATTERN.test(execution.stderr ?? '')
+      ? 'Process limit exceeded.'
+      : 'Runtime error.';
+  }
+  return null;
+}
+
 /**
  * Executes main.py for one test case using the test input and time limit.
  *
@@ -200,20 +238,9 @@ export async function evaluateTestCase(temporaryDirectory, testCase) {
   const actualOutput = normaliseOutput(execution.stdout);
   const expected = normaliseOutput(expectedOutput);
 
-  let reason = null;
+  let reason = classifyExecutionFailure(execution);
 
-  if (execution.timedOut) {
-    reason = 'Time limit exceeded.';
-  } else if (execution.outputExceeded) {
-    reason = 'Output limit exceeded.';
-  } else if (
-    execution.exitCode === NO_MAIN_EXIT_CODE &&
-    execution.stderr.includes(NO_MAIN_MARKER)
-  ) {
-    reason = MAIN_UNDEFINED_REASON;
-  } else if (execution.exitCode !== 0) {
-    reason = 'Runtime error.';
-  } else if (actualOutput !== expected) {
+  if (reason === null && actualOutput !== expected) {
     reason = 'Incorrect output.';
   }
 
