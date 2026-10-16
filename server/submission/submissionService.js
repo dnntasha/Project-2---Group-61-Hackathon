@@ -17,12 +17,18 @@ import { completeSubmission, failSubmission } from './submissionResults.js';
  *
  * Incorrect answers are completed grading attempts.
  * FAILED is reserved for grading infrastructure failures.
+ *
+ * The code to grade comes from `loadCodebase`, an async function that returns
+ * the team's own saved codebase. It only runs once the caller is known to be
+ * the team's leader, so nobody can make the server load another team's work.
+ * (`codebase` can be passed directly instead, for scripts and tests.)
  */
 export async function processSubmission({
   userId,
   teamId,
   problemId,
-  codebase,
+  loadCodebase,
+  codebase: suppliedCodebase,
 }) {
   if (!Number.isInteger(userId) || userId <= 0) {
     return {
@@ -32,17 +38,7 @@ export async function processSubmission({
     };
   }
 
-  // Validate the whole tree up front so bad input doesn't use up an attempt
-  const treeError = validateCodebaseTree(codebase);
-  if (treeError) {
-    return {
-      success: false,
-      status: 400,
-      error: treeError,
-    };
-  }
-
-  // Check eligibility before reserving an attempt.
+  // Check eligibility before loading anything or reserving an attempt.
   const eligibility = await checkSubmissionEligibility({
     userId,
     teamId,
@@ -51,6 +47,18 @@ export async function processSubmission({
 
   if (!eligibility.success) {
     return eligibility;
+  }
+
+  const codebase = loadCodebase ? await loadCodebase() : suppliedCodebase;
+
+  // Validate the whole tree up front so bad input doesn't use up an attempt
+  const treeError = validateCodebaseTree(codebase);
+  if (treeError) {
+    return {
+      success: false,
+      status: 400,
+      error: treeError,
+    };
   }
 
   // Atomically reserve one attempt.

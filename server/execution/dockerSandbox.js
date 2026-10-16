@@ -18,6 +18,17 @@ const DOCKER_OVERHEAD_MS = 10000;
 const DOCKER_COMMAND = 'docker';
 // coreutils `timeout` exits with this code when it had to stop the program
 const TIMEOUT_EXIT_CODE = 124;
+// Exit code and stderr marker used by the grading harness when main.py does
+// not define a callable main(); both are required so a submission that
+// merely calls sys.exit(97) is not mistaken for a missing entry point
+export const NO_MAIN_EXIT_CODE = 97;
+export const NO_MAIN_MARKER = '__CS343_NO_MAIN__';
+// Loads main.py (without triggering an `if __name__ == "__main__"` guard) and
+// calls its main() exactly once. Written as one line because it is passed to
+// `python -c` as a single argument.
+const ENTRY_POINT_HARNESS =
+  "import runpy,sys;ns=runpy.run_path('/app/main.py',run_name='submission');" +
+  `f=ns.get('main');callable(f) or (sys.stderr.write('${NO_MAIN_MARKER}'),sys.exit(${NO_MAIN_EXIT_CODE}));f()`;
 // Unprivileged "nobody" user inside the container
 const CONTAINER_USER = '65534:65534';
 // How many sandbox containers may run at once (each is capped at half a CPU)
@@ -125,11 +136,21 @@ async function makeWorldReadable(directory) {
  * read-only at /app. The program is stopped by `timeout` inside the
  * container, so container start-up time does not count against the limit.
  * scripts/docker-check.mjs uses the same arguments.
+ *
+ * By default main.py is run as a plain script. With `callMain` it is loaded
+ * as a module and its main() entry point is called, as grading requires.
  */
-export function sandboxArgs(projectDirectory, timeoutMs = DEFAULT_TIMEOUT_MS) {
+export function sandboxArgs(
+  projectDirectory,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  { callMain = false } = {}
+) {
   return [
     '--label',
     SANDBOX_LABEL,
+    // Never download an image while grading: it must already be installed
+    '--pull',
+    'never',
     '--network',
     'none',
     '--memory',
@@ -141,6 +162,23 @@ export function sandboxArgs(projectDirectory, timeoutMs = DEFAULT_TIMEOUT_MS) {
     '--pids-limit',
     '64',
     '--read-only',
+    // The only writable place: a small scratch area that cannot run programs
+    '--tmpfs',
+    '/tmp:rw,noexec,nosuid,size=16m',
+    // No more than 64 open files, no files over 16 MB, no core dumps
+    '--ulimit',
+    'nofile=64:64',
+    '--ulimit',
+    'fsize=16777216:16777216',
+    '--ulimit',
+    'core=0',
+    // No shared memory with the host or other containers
+    '--ipc',
+    'none',
+    // Never keep (potentially huge) program output in Docker's log files; the
+    // output is read from the attached streams instead
+    '--log-driver',
+    'none',
     '--cap-drop',
     'ALL',
     '--security-opt',
@@ -158,27 +196,33 @@ export function sandboxArgs(projectDirectory, timeoutMs = DEFAULT_TIMEOUT_MS) {
     String(timeoutMs / 1000),
     'python',
     '-B',
-    '/app/main.py',
+    ...(callMain ? ['-c', ENTRY_POINT_HARNESS] : ['/app/main.py']),
   ];
 }
 
-// Time the program itself ran, from Docker's own start/finish timestamps
-// (nanosecond precision), or null if they are unavailable
-async function containerRuntimeMs(containerName) {
+// What Docker recorded about a finished container: how long the program ran
+// (from Docker's own start/finish timestamps, nanosecond precision, or null if
+// they are unavailable) and whether the kernel killed it for using too much
+// memory. The latter is the only way to tell an out-of-memory kill from the
+// program crashing, since both look like a non-zero exit code.
+async function inspectContainer(containerName) {
   try {
     const inspect = await dockerCommand([
       'inspect',
       '--format',
-      '{{.State.StartedAt}} {{.State.FinishedAt}}',
+      '{{.State.OOMKilled}} {{.State.StartedAt}} {{.State.FinishedAt}}',
       containerName,
     ]);
-    if (inspect.exitCode !== 0) return null;
+    if (inspect.exitCode !== 0) return { runtimeMs: null, oomKilled: false };
 
-    const [started, finished] = inspect.stdout.trim().split(' ').map(toMs);
-    const runtime = finished - started;
-    return Number.isFinite(runtime) && runtime >= 0 ? runtime : null;
+    const [oomKilled, started, finished] = inspect.stdout.trim().split(' ');
+    const runtime = toMs(finished) - toMs(started);
+    return {
+      runtimeMs: Number.isFinite(runtime) && runtime >= 0 ? runtime : null,
+      oomKilled: oomKilled === 'true',
+    };
   } catch {
-    return null;
+    return { runtimeMs: null, oomKilled: false };
   }
 }
 
@@ -225,7 +269,8 @@ export async function executeDockerPythonFile(
   filePath,
   stdin = '',
   timeoutMs = DEFAULT_TIMEOUT_MS,
-  cwd
+  cwd,
+  options = {}
 ) {
   if (!cwd || !path.isAbsolute(cwd)) {
     throw new Error('An absolute project directory is required.');
@@ -239,10 +284,10 @@ export async function executeDockerPythonFile(
     throw new Error('Invalid timeout.');
   }
 
-  return withRunSlot(() => runContainer(stdin, timeoutMs, cwd));
+  return withRunSlot(() => runContainer(stdin, timeoutMs, cwd, options));
 }
 
-async function runContainer(stdin, timeoutMs, cwd) {
+async function runContainer(stdin, timeoutMs, cwd, options) {
   const containerName = `cs343-${randomUUID()}`;
   await makeWorldReadable(cwd);
 
@@ -252,7 +297,7 @@ async function runContainer(stdin, timeoutMs, cwd) {
       '--name',
       containerName,
       '--interactive',
-      ...sandboxArgs(cwd, timeoutMs),
+      ...sandboxArgs(cwd, timeoutMs, options),
     ]);
 
     if (
@@ -271,7 +316,8 @@ async function runContainer(stdin, timeoutMs, cwd) {
     );
     const wallClockMs = performance.now() - started;
 
-    const runtimeMs = (await containerRuntimeMs(containerName)) ?? wallClockMs;
+    const details = await inspectContainer(containerName);
+    const runtimeMs = details.runtimeMs ?? wallClockMs;
 
     return {
       stdout: execution.stdout,
@@ -283,6 +329,7 @@ async function runContainer(stdin, timeoutMs, cwd) {
         execution.exitCode === TIMEOUT_EXIT_CODE ||
         (execution.exitCode === 137 && runtimeMs >= timeoutMs),
       outputExceeded: execution.outputExceeded,
+      oomKilled: details.oomKilled,
       runtimeMs,
     };
   } finally {

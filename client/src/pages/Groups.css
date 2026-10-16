@@ -120,27 +120,84 @@
   cursor: pointer;
 }
 
-/* ---- Create group ---- */
-
-.group-create {
-  margin: 20px 0 28px;
+.back-button {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: none;
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
 }
 
-.group-create label {
-  display: block;
-  font-weight: 500;
-  color: var(--text-h);
-  margin-bottom: 6px;
+.group-container {
+  margin-top: 14px;
+  padding: 24px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+}
+
+.group-container .group-heading {
+  margin-top: 0;
+}
+
+.group-container > :last-child,
+.group-container > :last-child > :last-child {
+  margin-bottom: 0;
+}
+
+@media (max-width: 560px) {
+  .group-container {
+    padding: 16px;
+  }
+}
+
+/* ---- Groups overview ---- */
+
+.groups-header {
+  margin-bottom: 24px;
+}
+
+.groups-header h1 {
+  margin: 0 0 10px;
+}
+
+.groups-header p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.group-create {
+  margin-bottom: 28px;
 }
 
 .group-create-row {
   display: flex;
   gap: 8px;
+  margin-top: 14px;
 }
 
 .group-create-row input {
   flex: 1;
   min-width: 0;
+}
+
+.groups-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.groups-list-heading h2 {
+  margin: 0;
 }
 
 /* ---- Group list ---- */
@@ -161,16 +218,11 @@
   font: inherit;
   text-align: left;
   color: var(--text-h);
-  background: var(--bg);
+  background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 12px 14px;
   cursor: pointer;
-  transition: border-color 150ms ease;
-}
-
-.group-card:hover {
-  border-color: var(--accent);
 }
 
 .group-card-name {
@@ -221,6 +273,7 @@
 }
 
 .panel {
+  background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 18px;
@@ -504,18 +557,102 @@
   color: var(--text-h);
 }
 
-/* ---- Start the event ---- */
-
-.panel-start {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+.settings-list {
+  margin-top: 8px;
 }
 
-.panel-start .form-error {
-  flex-basis: 100%;
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-row-text {
+  display: grid;
+  gap: 2px;
+}
+
+.settings-row-text .form-hint {
+  margin: 0;
+}
+
+.settings-row-label {
+  font-weight: 500;
+  color: var(--text-h);
+}
+
+.settings-row input {
+  width: 110px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.settings-row input:disabled {
+  opacity: 0.6;
+}
+
+.settings-list + .form-actions {
+  margin-top: 18px;
+}
+
+@media (max-width: 560px) {
+  .settings-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .settings-row input {
+    width: 100%;
+    text-align: left;
+  }
+}
+
+/* ---- Start the event ---- */
+
+.start-event {
+  display: grid;
+  justify-items: end;
+}
+
+/* ---- Group tabs ---- */
+
+.group-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 20px;
+  padding: 4px 0 16px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.group-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.group-tab {
+  font: inherit;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: normal;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.group-tab-active,
+.group-tab-active:hover {
+  color: var(--accent);
+  background: var(--accent-bg);
 }
 
 /* ---- Small screens ---- */

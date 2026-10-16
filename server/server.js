@@ -26,18 +26,31 @@
  * A second WebSocket endpoint, /ws/notifications, carries per-user push events
  * (e.g. "your invites changed") - see lib/notifier.js.
  */
+import { setInterval } from 'node:timers';
 import express from 'express';
 import http from 'http';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { requireAuth } from './middleware/auth.js';
+import { rateLimit } from './middleware/rateLimit.js';
+import { securityHeaders } from './middleware/securityHeaders.js';
 
 import { executePython } from './execution/pythonExecutor.js';
 import { removeOrphanedContainers } from './execution/dockerSandbox.js';
 import authRoutes from './routes/auth.js';
 import teamRoutes from './routes/teams.js';
 import leaderboardRoutes from './routes/leaderboards.js';
-import { authenticate } from './lib/sessions.js';
+import { authenticate, startSessionCleanup } from './lib/sessions.js';
 import { prisma } from './lib/prisma.js';
+import {
+  allTeamSockets,
+  CLOSE_ACCESS_REVOKED,
+  registerTeamSocket,
+  unregisterTeamSocket,
+} from './lib/roomAccess.js';
+import { roomToCodebase } from './lib/roomCodebase.js';
+import { EVENT_STATUS, getEndsAt, getEventStatus } from './lib/eventTime.js';
 
 import { processSubmission } from './submission/submissionService.js';
 import { failInterruptedSubmissions } from './submission/submissionResults.js';
@@ -58,6 +71,8 @@ import groupRoutes, { ICON_DIR } from './routes/groups.js';
 import problemRoutes from './routes/problems.js';
 
 const app = express();
+app.disable('x-powered-by');
+app.use(securityHeaders);
 const port = process.env.PORT || 5000;
 
 if (!process.env.JWT_SECRET) {
@@ -92,6 +107,43 @@ const MAX_HISTORY = 1000;
 const WS_AUTH_RECHECK_MS = 60 * 1000;
 // Room IDs may only contain letters, digits, underscores and hyphens (1-64 chars)
 const ROOM_ID_PATTERN = /^[\w-]{1,64}$/;
+// How often every open socket is re-checked in the background, so a socket
+// that never sends anything still loses access when its session expires or its
+// user leaves the team
+const WS_SWEEP_MS = 30 * 1000;
+// How often rooms are checked for the event starting or ending
+const EVENT_STATUS_POLL_MS = 2000;
+// Message types that change a team's work. They are only accepted while the
+// event is running; looking at the room is always allowed.
+const MUTATING_MESSAGE_TYPES = new Set([
+  'TEXT_EDIT',
+  'TREE_OPERATION',
+  'RUN_CODE',
+  'SUBMIT_SOLUTION',
+]);
+const EVENT_LOCK_MESSAGES = {
+  [EVENT_STATUS.NOT_STARTED]:
+    'The event has not started yet, so the code cannot be changed.',
+  [EVENT_STATUS.ENDED]:
+    'The event has ended, so the code can no longer be changed.',
+};
+// Browsers can't set headers on a WebSocket, so the session token is sent as a
+// subprotocol (`new WebSocket(url, ['bearer', token])`) rather than in the URL,
+// where it would end up in proxy and access logs.
+const TOKEN_SUBPROTOCOL = 'bearer';
+
+function tokenFromUpgrade(req) {
+  const offered = String(req.headers['sec-websocket-protocol'] ?? '')
+    .split(',')
+    .map((protocol) => protocol.trim());
+  return offered.length === 2 && offered[0] === TOKEN_SUBPROTOCOL
+    ? offered[1]
+    : null;
+}
+
+function selectTokenSubprotocol(protocols) {
+  return protocols.has(TOKEN_SUBPROTOCOL) ? TOKEN_SUBPROTOCOL : false;
+}
 
 function isValidFilePath(filePath) {
   // A valid path is a non-empty string of at most 256 characters, uses '/'
@@ -160,7 +212,21 @@ app.use('/api/uploads/icons', express.static(ICON_DIR));
  * exit information, timeout information and runtime data.
  */
 
-app.post('/api/execute', requireAuth, async (req, res) => {
+// Each run starts a Docker container, so one user can only start so many
+const executeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  key: (req) => `execute:${req.user.id}`,
+  message: 'You are running code too quickly. Wait a moment and try again.',
+});
+const submitLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  key: (req) => `submit:${req.user.id}`,
+  message: 'You are submitting too quickly. Wait a moment and try again.',
+});
+
+app.post('/api/execute', requireAuth, executeLimiter, async (req, res) => {
   if (process.env.ENABLE_PYTHON_EXECUTION !== 'true') {
     return res.status(503).json({
       error: 'Python execution is not yet available.',
@@ -203,8 +269,8 @@ app.post('/api/execute', requireAuth, async (req, res) => {
  * Authenticated team submission endpoint.
  *
  * The submission service:
- * - Validates the codebase.
  * - Checks team leadership and problem eligibility.
+ * - Loads the team's own saved codebase and validates it.
  * - Atomically reserves an attempt.
  * - Loads trusted test cases from the database.
  * - Evaluates the submitted codebase.
@@ -214,14 +280,15 @@ app.post('/api/execute', requireAuth, async (req, res) => {
  * Keep this endpoint disabled for untrusted users until
  * the Docker deployment and remaining security checks pass.
  */
-app.post('/api/submit', requireAuth, async (req, res) => {
+app.post('/api/submit', requireAuth, submitLimiter, async (req, res) => {
   if (process.env.ENABLE_SUBMISSION_GRADING !== 'true') {
     return res.status(503).json({
       success: false,
       error: 'Submission grading is not yet available.',
     });
   }
-  const { teamId, problemId, codebase } = req.body;
+  // The code is never taken from the request: the team's saved room is graded
+  const { teamId, problemId } = req.body ?? {};
 
   if (
     !Number.isInteger(teamId) ||
@@ -240,7 +307,7 @@ app.post('/api/submit', requireAuth, async (req, res) => {
       userId: req.user.id,
       teamId,
       problemId,
-      codebase,
+      loadCodebase: () => getTeamCodebase(teamId),
     });
 
     return res.status(result.status).json(result);
@@ -258,6 +325,19 @@ app.post('/api/submit', requireAuth, async (req, res) => {
 app.use('/api', (req, res) => {
   res.status(404).json({ error: 'Not found.' });
 });
+
+// Production: after `npm run build` the built client in client/dist is served
+// by this same server, so one process (and one port) runs the whole site.
+// Any other path gets index.html so the client-side router can handle it. In
+// development the Vite dev server serves the client instead and none of this
+// is used.
+const CLIENT_DIST = fileURLToPath(new URL('../client/dist', import.meta.url));
+if (existsSync(`${CLIENT_DIST}/index.html`)) {
+  app.use(express.static(CLIENT_DIST));
+  app.get('*', (req, res) => {
+    res.sendFile(`${CLIENT_DIST}/index.html`);
+  });
+}
 
 // Shared error handler.
 // Keep this after the HTTP routes so route errors can reach it.
@@ -298,9 +378,14 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({
   noServer: true,
   maxPayload: MAX_CODE_BYTES + 4096,
+  handleProtocols: selectTokenSubprotocol,
 });
 // Notification clients never need to send anything big
-const notifyWss = new WebSocketServer({ noServer: true, maxPayload: 1024 });
+const notifyWss = new WebSocketServer({
+  noServer: true,
+  maxPayload: 1024,
+  handleProtocols: selectTokenSubprotocol,
+});
 
 server.on('upgrade', (req, socket, head) => {
   const { pathname } = new URL(req.url, 'http://localhost');
@@ -366,7 +451,7 @@ const roomsLoading = new Map();
 
 // Returns the room with this ID, loading it from the database (or creating the
 // default one) the first time it is needed. Async because of the database read.
-async function getRoom(roomId, teamId) {
+async function getRoom(roomId, teamId, group) {
   const existing = rooms.get(roomId);
   if (existing) return existing;
 
@@ -377,6 +462,11 @@ async function getRoom(roomId, teamId) {
         const room = {
           clients: new Set(),
           teamId,
+          // The group's event timing ({ id, startedAt, durationMin }). Only a
+          // group that has not started needs re-reading, see getRoomEventStatus
+          group,
+          groupCheckedAt: Date.now(),
+          eventStatus: getEventStatus(group),
           saveTimer: null, // pending debounced save, if any
           dirty: false, // true when there are changes not yet in the database
           saving: Promise.resolve(), // tail of the chain of save operations
@@ -435,6 +525,99 @@ function flushAllRooms() {
   return Promise.all([...rooms.values()].map((room) => saveRoomNow(room)));
 }
 
+// The room's current event status ('not-started', 'running' or 'ended').
+// Once the event has started its end time is fixed, so the status is worked
+// out from the cached group. Only a group that has not started is re-read from
+// the database (at most every EVENT_STATUS_POLL_MS) to notice the admin
+// starting it.
+async function getRoomEventStatus(room) {
+  if (
+    !room.group.startedAt &&
+    Date.now() - room.groupCheckedAt >= EVENT_STATUS_POLL_MS
+  ) {
+    room.groupCheckedAt = Date.now();
+    const fresh = await prisma.group.findUnique({
+      where: { id: room.group.id },
+      select: { id: true, startedAt: true, durationMin: true },
+    });
+    // A deleted group can't be worked on any more
+    if (!fresh) return EVENT_STATUS.ENDED;
+    room.group = fresh;
+  }
+  return getEventStatus(room.group);
+}
+
+function eventStatusMessage(room, status) {
+  return {
+    type: 'EVENT_STATUS',
+    status,
+    endsAt: getEndsAt(room.group)?.toISOString() ?? null,
+  };
+}
+
+// Tells everyone in a room when the event starts or ends
+async function broadcastEventStatusChanges() {
+  for (const room of rooms.values()) {
+    if (room.clients.size === 0) continue;
+    try {
+      const status = await getRoomEventStatus(room);
+      if (status !== room.eventStatus) {
+        room.eventStatus = status;
+        broadcastToRoom(room, null, eventStatusMessage(room, status));
+      }
+    } catch (error) {
+      console.error('Could not check the event status:', error);
+    }
+  }
+}
+
+// True while this user is the leader or a member of the team
+async function isTeamMember(teamId, userId) {
+  const team = await prisma.team.findFirst({
+    where: {
+      id: teamId,
+      OR: [{ leaderId: userId }, { members: { some: { userId } } }],
+    },
+    select: { id: true },
+  });
+  return Boolean(team);
+}
+
+// Closes sockets whose session has expired or whose user has left the team.
+// These checks don't count as activity (`touch: false`), so a socket that is
+// only receiving teammates' edits can't keep an idle session alive.
+async function sweepSockets() {
+  const checks = [
+    ...allTeamSockets().map(async (ws) => {
+      if (!(await authenticate(ws.token, { touch: false }))) {
+        ws.close(4001, 'Unauthorized');
+      } else if (!(await isTeamMember(ws.teamId, ws.user.id))) {
+        ws.close(CLOSE_ACCESS_REVOKED, 'You are no longer on this team.');
+      }
+    }),
+    ...[...notifyWss.clients]
+      .filter((ws) => ws.userId !== undefined)
+      .map(async (ws) => {
+        if (!(await authenticate(ws.token, { touch: false }))) {
+          ws.close(4001, 'Unauthorized');
+        }
+      }),
+  ];
+  const outcomes = await Promise.allSettled(checks);
+  for (const outcome of outcomes) {
+    if (outcome.status === 'rejected') {
+      console.error('Socket check failed:', outcome.reason);
+    }
+  }
+}
+
+// The team's saved work as a codebase tree for grading: the live room if
+// someone has it open, otherwise what the database holds
+async function getTeamCodebase(teamId) {
+  const room = rooms.get(`team-${teamId}`) ?? (await loadRoomState(teamId));
+  return roomToCodebase(room.tree, room.files);
+}
+
 // Sends a JSON message to one client, skipping sockets that are no longer open
 function send(ws, message) {
   if (ws.readyState === WebSocket.OPEN) {
@@ -478,12 +661,14 @@ function broadcastToRoom(room, sender, message) {
 }
 
 // Handle WebSocket connections.
-// Clients connect to /ws?token=<session token>&roomId=<room>.
+// Clients connect to /ws?roomId=<room>, sending the session token as the
+// second WebSocket subprotocol (see tokenFromUpgrade).
 wss.on('connection', async (ws, req) => {
   const { searchParams } = new URL(req.url, 'http://localhost');
-  const token = searchParams.get('token');
+  const token = tokenFromUpgrade(req);
   const roomId = searchParams.get('roomId') || '';
   let room = null;
+  ws.token = token;
 
   // Attached first so a socket that errors or closes while authentication is
   // still running neither crashes the process nor stays in a room
@@ -491,6 +676,7 @@ wss.on('connection', async (ws, req) => {
     console.error(`WebSocket error in room ${roomId}:`, error.message);
   });
   ws.on('close', () => {
+    if (ws.teamId !== undefined) unregisterTeamSocket(ws.teamId, ws);
     if (!room) return;
     room.clients.delete(ws);
     console.log(`${ws.user.username} disconnected from room ${roomId}`);
@@ -534,12 +720,32 @@ wss.on('connection', async (ws, req) => {
               ws.close(4001, 'Unauthorized');
               return;
             }
+            // Membership can change while a socket stays open (the user may
+            // have left the team), so it is re-checked along with the session
+            if (!(await isTeamMember(ws.teamId, ws.user.id))) {
+              ws.close(CLOSE_ACCESS_REVOKED, 'You are no longer on this team.');
+              return;
+            }
             ws.authCheckedAt = Date.now();
           }
 
           if (!data || typeof data.type !== 'string') {
             send(ws, { type: 'ERROR', error: 'Message type is required.' });
             return;
+          }
+
+          // Work can only change while the event is running
+          if (MUTATING_MESSAGE_TYPES.has(data.type)) {
+            const status = await getRoomEventStatus(room);
+            if (status !== EVENT_STATUS.RUNNING) {
+              // filePath lets the client drop a rejected edit and resync
+              send(ws, {
+                type: 'ERROR',
+                filePath: data.type === 'TEXT_EDIT' ? data.filePath : undefined,
+                error: EVENT_LOCK_MESSAGES[status],
+              });
+              return;
+            }
           }
 
           switch (data.type) {
@@ -817,7 +1023,10 @@ wss.on('connection', async (ws, req) => {
           { members: { some: { userId: auth.user.id } } },
         ],
       },
-      select: { id: true },
+      select: {
+        id: true,
+        group: { select: { id: true, startedAt: true, durationMin: true } },
+      },
     });
 
     if (!team) {
@@ -834,9 +1043,10 @@ wss.on('connection', async (ws, req) => {
 
     ws.user = auth.user;
     ws.roomId = roomId;
+    ws.teamId = teamId;
     ws.authCheckedAt = Date.now();
     // Loads the team's saved files from the database on first use
-    const loadedRoom = await getRoom(roomId, teamId);
+    const loadedRoom = await getRoom(roomId, teamId, team.group);
     // The client may have disconnected during the database read; its close
     // handler already ran (with no room), so don't add a dead socket now
     if (ws.readyState !== WebSocket.OPEN) {
@@ -845,11 +1055,16 @@ wss.on('connection', async (ws, req) => {
     }
     room = loadedRoom;
     room.clients.add(ws);
+    registerTeamSocket(teamId, ws);
     console.log(`${ws.user.username} connected to room ${roomId}`);
     setupDone(); // start processing any queued messages
 
-    // Tell the client the connection was accepted
+    // Tell the client the connection was accepted, and whether the code can
+    // currently be changed
     send(ws, { type: 'WELCOME', message: 'Connected to the editor room.' });
+    const status = await getRoomEventStatus(room);
+    room.eventStatus = status;
+    send(ws, eventStatusMessage(room, status));
   } catch (error) {
     console.error('WebSocket connection setup failed:', error);
     setupDone();
@@ -858,11 +1073,12 @@ wss.on('connection', async (ws, req) => {
 });
 
 // Per-user notification sockets: clients connect to
-// /ws/notifications?token=<session token>. The server only ever pushes to
-// these (see lib/notifier.js); anything a client sends is ignored.
+// /ws/notifications, sending the session token as a subprotocol like the
+// editor socket. The server only ever pushes to these (see lib/notifier.js);
+// anything a client sends is ignored.
 notifyWss.on('connection', async (ws, req) => {
-  const { searchParams } = new URL(req.url, 'http://localhost');
   let userId = null;
+  ws.token = tokenFromUpgrade(req);
 
   // Attached before the (async) authentication so a socket that closes or
   // errors mid-way is cleaned up properly and never crashes the process
@@ -874,7 +1090,7 @@ notifyWss.on('connection', async (ws, req) => {
   });
 
   try {
-    const auth = await authenticate(searchParams.get('token'));
+    const auth = await authenticate(ws.token);
     if (!auth) {
       // 4001 tells the client its sign-in is invalid/expired
       ws.close(4001, 'Unauthorized');
@@ -883,6 +1099,7 @@ notifyWss.on('connection', async (ws, req) => {
     if (ws.readyState !== WebSocket.OPEN) return; // closed while authenticating
 
     userId = auth.user.id;
+    ws.userId = userId;
     register(userId, ws);
   } catch (error) {
     console.error('Notification socket setup failed:', error);
@@ -900,10 +1117,16 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
   });
 }
 
+// Background checks: idle or revoked sockets are closed, and rooms are told
+// when the event starts or ends. unref() so they never keep the process alive.
+setInterval(sweepSockets, WS_SWEEP_MS).unref();
+setInterval(broadcastEventStatusChanges, EVENT_STATUS_POLL_MS).unref();
+
 // Start the HTTP & WebSocket server
 server.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
   console.log(`WebSocket server running on ws://localhost:${port}/ws`);
+  startSessionCleanup();
 
   // Sandbox containers from a previous run that was stopped mid-execution
   if (

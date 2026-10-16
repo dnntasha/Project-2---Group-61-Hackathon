@@ -17,6 +17,7 @@ import {
 import { getEndsAt, getEventStatus } from '../lib/eventTime.js';
 import { notifyInvitesChanged } from '../lib/notifier.js';
 import { createStarterCodebases } from '../lib/codebases.js';
+import { hasImageSignature } from '../lib/imageSignature.js';
 
 // Icons are saved in server/uploads/icons and served at /api/uploads/icons.
 export const ICON_DIR = fileURLToPath(
@@ -369,6 +370,28 @@ router.patch(
       data[field] = value;
     }
 
+    // A team's members plus its pending invitations must always fit within
+    // the maximum size, otherwise an invitee could fail to join. So the limit
+    // can't be lowered below what any team already has.
+    if (data.maxTeamSize !== undefined) {
+      const teams = await prisma.team.findMany({
+        where: { groupId: req.group.id },
+        select: {
+          name: true,
+          _count: { select: { members: true, invites: true } },
+        },
+      });
+
+      for (const team of teams) {
+        const used = team._count.members + team._count.invites;
+        if (used > data.maxTeamSize) {
+          return res.status(409).json({
+            error: `Team "${team.name}" already has ${used} members and pending invitations. Choose ${used} or more, or ask its leader to cancel invitations first.`,
+          });
+        }
+      }
+    }
+
     const group = await prisma.group.update({
       where: {
         id: req.group.id,
@@ -406,6 +429,15 @@ router.post(
       }
 
       try {
+        // The browser-supplied Content-Type can be anything, so check the
+        // file's own signature before keeping it
+        if (!(await hasImageSignature(req.file.path, req.file.mimetype))) {
+          await unlink(req.file.path).catch(() => {});
+          return res.status(400).json({
+            error: 'That file is not a valid PNG, JPEG, GIF or WebP image.',
+          });
+        }
+
         const oldFile = req.group.iconFile;
 
         const group = await prisma.group.update({
@@ -426,6 +458,8 @@ router.post(
           group: toClient(group, true),
         });
       } catch (dbErr) {
+        // Don't leave the uploaded file behind if it wasn't recorded
+        await unlink(req.file.path).catch(() => {});
         next(dbErr);
       }
     });

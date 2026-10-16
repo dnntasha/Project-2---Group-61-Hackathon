@@ -33,60 +33,84 @@ export default function GroupsPage({ onOpen }) {
 
   return (
     <section className="groups page-enter">
-      <h1>Your groups</h1>
-
-      <InviteList onAccepted={onOpen} />
-
-      <form className="group-create" onSubmit={handleCreate}>
-        <label htmlFor="group-name">Create a group</label>
-        <div className="group-create-row">
-          <input
-            id="group-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Stellenbosch Spring Hackathon"
-            maxLength={40}
-          />
-          <button
-            className="btn-primary"
-            type="submit"
-            disabled={busy || !name.trim()}
-          >
-            {busy ? 'Creating…' : 'Create'}
-          </button>
-        </div>
-        <p className="form-hint">You become the admin of groups you create.</p>
-        {error && (
-          <p className="form-error" role="alert">
-            {error}
+      <div className="group-container">
+        <header className="groups-header">
+          <h1>Your groups</h1>
+          <p className="muted">
+            Open a group to manage its teams, or start a new one.
           </p>
-        )}
-      </form>
+        </header>
 
-      {loadError && <p className="form-error">{loadError}</p>}
-      {!groups && !loadError && <p className="muted">Loading groups…</p>}
-      {groups?.length === 0 && (
-        <p className="muted">
-          You are not in any groups yet. Create one, or wait for an invite.
-        </p>
-      )}
+        <InviteList onAccepted={onOpen} />
 
-      {groups?.length > 0 && (
-        <ul className="group-list">
-          {groups.map((group) => (
-            <li key={group.id}>
-              <button className="group-card" onClick={() => onOpen(group.id)}>
-                <GroupIcon group={group} />
-                <span className="group-card-name">{group.name}</span>
-                <span className="group-card-meta">
-                  {group.isAdmin ? 'Admin' : 'Member'}
-                  {group.startedAt ? ' · Started' : ''}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+        <form className="panel group-create" onSubmit={handleCreate}>
+          <h2>Create a group</h2>
+          <p className="form-hint">
+            You become the admin of groups you create.
+          </p>
+
+          <div className="group-create-row">
+            <input
+              id="group-name"
+              aria-label="Group name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Stellenbosch Spring Hackathon"
+              maxLength={40}
+            />
+            <button
+              className="btn-primary"
+              type="submit"
+              disabled={busy || !name.trim()}
+            >
+              {busy ? 'Creating…' : 'Create'}
+            </button>
+          </div>
+
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          )}
+        </form>
+
+        <div className="groups-list-section">
+          <div className="groups-list-heading">
+            <h2>Groups you&apos;re in</h2>
+            {groups && <span className="member-count">{groups.length}</span>}
+          </div>
+
+          {loadError && <p className="form-error">{loadError}</p>}
+          {!groups && !loadError && <p className="muted">Loading groups…</p>}
+          {groups?.length === 0 && (
+            <p className="form-hint">
+              You are not in any groups yet. Create one, or wait for an invite.
+            </p>
+          )}
+
+          {groups?.length > 0 && (
+            <ul className="group-list">
+              {groups.map((group) => (
+                <li key={group.id}>
+                  <button
+                    className="group-card"
+                    onClick={() => onOpen(group.id)}
+                  >
+                    <GroupIcon group={group} />
+                    <span className="group-card-name">{group.name}</span>
+                    <span className="member-badge">
+                      {group.isAdmin ? 'Admin' : 'Member'}
+                    </span>
+                    {group.startedAt && (
+                      <span className="group-card-meta">Started</span>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
     </section>
   );
 }
