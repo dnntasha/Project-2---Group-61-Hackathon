@@ -20,6 +20,11 @@ CREATE TABLE "CodebaseFile" (
     CONSTRAINT "CodebaseFile_codebaseId_fkey" FOREIGN KEY ("codebaseId") REFERENCES "Codebase" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
+-- DropTable
+PRAGMA foreign_keys=off;
+DROP TABLE "TeamFile";
+PRAGMA foreign_keys=on;
+
 -- RedefineTables
 PRAGMA defer_foreign_keys=ON;
 PRAGMA foreign_keys=OFF;
