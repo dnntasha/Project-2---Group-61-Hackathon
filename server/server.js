@@ -38,7 +38,7 @@ import { removeOrphanedContainers } from './execution/dockerSandbox.js';
 import authRoutes from './routes/auth.js';
 import teamRoutes from './routes/teams.js';
 import leaderboardRoutes from './routes/leaderboards.js';
-import { authenticate } from './lib/sessions.js';
+import { authenticate, startSessionCleanup } from './lib/sessions.js';
 import { prisma } from './lib/prisma.js';
 
 import { processSubmission } from './submission/submissionService.js';
@@ -921,6 +921,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 server.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
   console.log(`WebSocket server running on ws://localhost:${port}/ws`);
+  startSessionCleanup();
 
   // Sandbox containers from a previous run that was stopped mid-execution
   if (
