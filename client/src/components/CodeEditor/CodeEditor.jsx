@@ -673,7 +673,10 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
     <div className="editor page-enter">
       <header className="editor-header">
         <div className="editor-title">
-          <p className="editor-brand">The Hackathon</p>
+          <p className="editor-brand">
+            The Hackathon
+            {selectedTeam?.group?.name ? `: ${selectedTeam.group.name}` : ''}
+          </p>
           <div className="editor-status">
             <span
               className={`status-indicator ${isConnected ? 'connected' : 'disconnected'}`}
@@ -682,8 +685,11 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
             <span role="status">
               {isConnected ? 'Connected' : 'Disconnected'}
             </span>
-            <span className="room-label">
-              Room: {activeRoomId || 'No team selected'}
+          </div>
+          <div className="editor-room">
+            <span className="editor-room-label">Room: </span>
+            <span className="editor-room-value">
+              {activeRoomId || 'No team selected'}
             </span>
           </div>
           <div className="editor-team-selector">
@@ -691,6 +697,7 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
 
             <select
               id="editor-team-select"
+              className="editor-team-select"
               value={selectedTeamId}
               onChange={(event) => setSelectedTeamId(event.target.value)}
               disabled={teamsLoading || teams.length === 0}

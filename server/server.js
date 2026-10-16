@@ -120,6 +120,7 @@ app.get('/api/my-teams', requireAuth, async (req, res) => {
         id: true,
         name: true,
         groupId: true,
+        group: { select: { name: true } },
       },
       orderBy: { id: 'asc' },
     });
