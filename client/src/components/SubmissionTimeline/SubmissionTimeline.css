@@ -157,3 +157,20 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Selecting a submission shows its report in the response area */
+.timeline-view {
+  margin-top: 10px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.timeline-selected .timeline-card {
+  outline: 2px solid var(--accent-border);
+}

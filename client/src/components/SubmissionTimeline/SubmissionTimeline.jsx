@@ -22,7 +22,11 @@ function formatDate(timestamp) {
   return date.toLocaleString();
 }
 
-export default function SubmissionTimeline({ submissions = [] }) {
+export default function SubmissionTimeline({
+  submissions = [],
+  onSelect,
+  selectedId,
+}) {
   return (
     <section className="submission-timeline">
       <div className="timeline-heading">
@@ -46,6 +50,15 @@ export default function SubmissionTimeline({ submissions = [] }) {
             const passed =
               submission.passed ?? submission.evaluation?.passed ?? false;
 
+            const statusText =
+              submission.status === 'PENDING'
+                ? 'Grading...'
+                : submission.status === 'FAILED'
+                  ? 'Not graded'
+                  : passed
+                    ? 'Accepted'
+                    : 'Failed';
+
             const passedTests =
               submission.passedTests ?? submission.evaluation?.passedTests ?? 0;
 
@@ -66,7 +79,7 @@ export default function SubmissionTimeline({ submissions = [] }) {
               <li
                 className={`timeline-item ${
                   passed ? 'timeline-passed' : 'timeline-failed'
-                }`}
+                }${submission.id === selectedId ? ' timeline-selected' : ''}`}
                 key={submission.id ?? `${submission.timestamp}-${index}`}
               >
                 <div className="timeline-marker" aria-hidden="true" />
@@ -80,9 +93,7 @@ export default function SubmissionTimeline({ submissions = [] }) {
                       </span>
                     </div>
 
-                    <span className="timeline-status">
-                      {passed ? 'Accepted' : 'Failed'}
-                    </span>
+                    <span className="timeline-status">{statusText}</span>
                   </div>
 
                   <div className="timeline-stats">
@@ -105,6 +116,16 @@ export default function SubmissionTimeline({ submissions = [] }) {
                       <strong>{formatRuntime(T)}</strong>
                     </div>
                   </div>
+                  {onSelect && (
+                    <button
+                      type="button"
+                      className="timeline-view"
+                      onClick={() => onSelect(submission)}
+                      aria-pressed={submission.id === selectedId}
+                    >
+                      View report
+                    </button>
+                  )}
                 </article>
               </li>
             );

@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link } from '../router.jsx';
 import './LandingPage.css';
 
 // Signed-in home page: what the platform does and where to start.
