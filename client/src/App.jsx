@@ -9,6 +9,7 @@ import CodeEditor from './components/CodeEditor/CodeEditor.jsx';
 import GroupsPage from './pages/GroupsPage.jsx';
 import GroupPage from './pages/GroupPage.jsx';
 import NavBar from './components/NavBar/NavBar.jsx';
+import { NotificationsProvider } from './notifications/NotificationsContext.jsx';
 
 import './App.css';
 
@@ -85,7 +86,10 @@ function AppRoutes() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppRoutes />
+      {/* Inside AuthProvider because it needs to know who is signed in */}
+      <NotificationsProvider>
+        <AppRoutes />
+      </NotificationsProvider>
     </AuthProvider>
   );
 }

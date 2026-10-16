@@ -4,6 +4,7 @@ import GroupIcon from '../components/GroupIcon.jsx';
 import Countdown from '../components/Countdown.jsx';
 import ProblemsPanel from '../components/ProblemsPanel.jsx';
 import GroupMembers from '../components/GroupMembers.jsx';
+import { useNotifications } from '../notifications/NotificationsContext.jsx';
 import './Groups.css';
 
 const STATUS_TEXT = {
@@ -172,9 +173,13 @@ function TeamsPanel({ group }) {
     }
   }, [group.id]);
 
+  // Reload the teams (and the user's pending team invites) whenever the server
+  // pushes an invite change, so new team invites appear without a refresh
+  const { tick } = useNotifications();
+
   useEffect(() => {
     loadTeams();
-  }, [loadTeams]);
+  }, [loadTeams, tick]);
 
   const locked = group.status !== 'not-started';
 

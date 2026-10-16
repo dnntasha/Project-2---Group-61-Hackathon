@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 import { hasStarted } from '../middleware/groups.js';
+import { notifyInvitesChanged } from '../lib/notifier.js';
 
 const router = Router();
 
@@ -405,6 +406,9 @@ router.post('/:teamId/invites', requireAuth, async (req, res, next) => {
       },
     });
 
+    // Push to the invitee (badge + invite list) and the leader (other tabs)
+    notifyInvitesChanged(userId, team.leaderId);
+
     return res.status(201).json(invite);
   } catch (err) {
     next(err);
@@ -497,6 +501,14 @@ router.post(
         return newMember;
       });
 
+      // The accepter's other tabs, the leader, and everyone already on the
+      // team (`invite.team.members` was loaded before the new member joined)
+      notifyInvitesChanged(
+        req.user.id,
+        invite.team.leaderId,
+        ...invite.team.members.map((member) => member.userId)
+      );
+
       return res.status(200).json(membership);
     } catch (err) {
       next(err);
@@ -522,6 +534,10 @@ router.post(
         where: {
           id: inviteId,
         },
+        // Needed to find out who leads the team
+        include: {
+          team: true,
+        },
       });
 
       if (!invite) {
@@ -541,6 +557,9 @@ router.post(
           id: inviteId,
         },
       });
+
+      // The decliner's other tabs and the leader (the pending list shrank)
+      notifyInvitesChanged(req.user.id, invite.team.leaderId);
 
       return res.json({
         message: 'Invitation declined.',

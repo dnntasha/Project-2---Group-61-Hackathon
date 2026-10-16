@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext.jsx';
+import { useNotifications } from '../../notifications/NotificationsContext.jsx';
 import './NavBar.css';
 
 // Problems and the leaderboard live on each group's page.
@@ -11,6 +12,9 @@ const NAV_ITEMS = [
 
 export default function NavBar() {
   const { user, signOut } = useAuth();
+  // Number of group + team invitations waiting for this user. It updates live
+  // because NotificationsProvider listens on a WebSocket.
+  const { pendingCount } = useNotifications();
 
   return (
     <nav className="navbar" aria-label="Main navigation">
@@ -24,6 +28,15 @@ export default function NavBar() {
               }
             >
               {label}
+              {/* Invites are answered on the Groups page, so badge that link */}
+              {to === '/dashboard' && pendingCount > 0 && (
+                <span
+                  className="navbar-badge"
+                  aria-label={`${pendingCount} pending invitation${pendingCount === 1 ? '' : 's'}`}
+                >
+                  {pendingCount}
+                </span>
+              )}
             </NavLink>
           </li>
         ))}
