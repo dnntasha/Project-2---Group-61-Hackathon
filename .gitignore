@@ -12,3 +12,4 @@ devNotes.md
 server/uploads/
 *.pdf
 server/prisma/shadow.db
+docs/
