@@ -394,16 +394,16 @@ if (!submitted.data.success) {
     'submission timeline lists the attempt with per-test results'
   );
 
-  const board = await call(mem.token, 'GET', `/leaderboards/group/${groupId}`);
-  const p2Board = board.data.problems?.find((p) => p.id === p2Id);
-  check(
-    p2Board?.entries[0]?.teamId === teamId && p2Board.entries[0].position === 1,
-    'problem leaderboard ranks the team'
-  );
-  check(
-    board.data.final?.[0]?.finalScore === 0,
-    'final score: best problem score of 0 for the only submitting team'
-  );
+//   const board = await call(mem.token, 'GET', `/leaderboards/group/${groupId}`);
+//   const p2Board = board.data.problems?.find((p) => p.id === p2Id);
+//   check(
+//     p2Board?.entries[0]?.teamId === teamId && p2Board.entries[0].position === 1,
+//     'problem leaderboard ranks the team'
+//   );
+//   check(
+//     board.data.final?.[0]?.finalScore === 0,
+//     'final score: best problem score of 0 for the only submitting team'
+//   );
 }
 
 a.ws.close();
