@@ -12,3 +12,4 @@ devNotes.md
 *.db-journal
 .vscode
 server/uploads/
+*.pdf
