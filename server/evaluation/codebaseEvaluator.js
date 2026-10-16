@@ -263,6 +263,7 @@ export async function evaluateTestCase(temporaryDirectory, testCase) {
  */
 export function formatTestResult(testCase, result) {
   const formattedResult = {
+    ...(testCase.id !== undefined && { testCaseId: testCase.id }),
     passed: result.passed,
     hidden: testCase.hidden ?? false,
     runtimeMs: result.runtimeMs,
