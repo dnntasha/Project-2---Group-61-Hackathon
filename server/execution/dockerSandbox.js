@@ -18,6 +18,17 @@ const DOCKER_OVERHEAD_MS = 10000;
 const DOCKER_COMMAND = 'docker';
 // coreutils `timeout` exits with this code when it had to stop the program
 const TIMEOUT_EXIT_CODE = 124;
+// Exit code and stderr marker used by the grading harness when main.py does
+// not define a callable main(); both are required so a submission that
+// merely calls sys.exit(97) is not mistaken for a missing entry point
+export const NO_MAIN_EXIT_CODE = 97;
+export const NO_MAIN_MARKER = '__CS343_NO_MAIN__';
+// Loads main.py (without triggering an `if __name__ == "__main__"` guard) and
+// calls its main() exactly once. Written as one line because it is passed to
+// `python -c` as a single argument.
+const ENTRY_POINT_HARNESS =
+  "import runpy,sys;ns=runpy.run_path('/app/main.py',run_name='submission');" +
+  `f=ns.get('main');callable(f) or (sys.stderr.write('${NO_MAIN_MARKER}'),sys.exit(${NO_MAIN_EXIT_CODE}));f()`;
 // Unprivileged "nobody" user inside the container
 const CONTAINER_USER = '65534:65534';
 // How many sandbox containers may run at once (each is capped at half a CPU)
@@ -125,8 +136,15 @@ async function makeWorldReadable(directory) {
  * read-only at /app. The program is stopped by `timeout` inside the
  * container, so container start-up time does not count against the limit.
  * scripts/docker-check.mjs uses the same arguments.
+ *
+ * By default main.py is run as a plain script. With `callMain` it is loaded
+ * as a module and its main() entry point is called, as grading requires.
  */
-export function sandboxArgs(projectDirectory, timeoutMs = DEFAULT_TIMEOUT_MS) {
+export function sandboxArgs(
+  projectDirectory,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  { callMain = false } = {}
+) {
   return [
     '--label',
     SANDBOX_LABEL,
@@ -158,7 +176,7 @@ export function sandboxArgs(projectDirectory, timeoutMs = DEFAULT_TIMEOUT_MS) {
     String(timeoutMs / 1000),
     'python',
     '-B',
-    '/app/main.py',
+    ...(callMain ? ['-c', ENTRY_POINT_HARNESS] : ['/app/main.py']),
   ];
 }
 
@@ -225,7 +243,8 @@ export async function executeDockerPythonFile(
   filePath,
   stdin = '',
   timeoutMs = DEFAULT_TIMEOUT_MS,
-  cwd
+  cwd,
+  options = {}
 ) {
   if (!cwd || !path.isAbsolute(cwd)) {
     throw new Error('An absolute project directory is required.');
@@ -239,10 +258,10 @@ export async function executeDockerPythonFile(
     throw new Error('Invalid timeout.');
   }
 
-  return withRunSlot(() => runContainer(stdin, timeoutMs, cwd));
+  return withRunSlot(() => runContainer(stdin, timeoutMs, cwd, options));
 }
 
-async function runContainer(stdin, timeoutMs, cwd) {
+async function runContainer(stdin, timeoutMs, cwd, options) {
   const containerName = `cs343-${randomUUID()}`;
   await makeWorldReadable(cwd);
 
@@ -252,7 +271,7 @@ async function runContainer(stdin, timeoutMs, cwd) {
       '--name',
       containerName,
       '--interactive',
-      ...sandboxArgs(cwd, timeoutMs),
+      ...sandboxArgs(cwd, timeoutMs, options),
     ]);
 
     if (
