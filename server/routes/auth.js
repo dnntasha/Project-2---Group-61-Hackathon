@@ -7,8 +7,37 @@ import {
   signSessionToken,
 } from '../lib/sessions.js';
 import { requireAuth } from '../middleware/auth.js';
+import { rateLimit } from '../middleware/rateLimit.js';
 
 const router = Router();
+
+// Registration: few accounts per address per hour
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 30,
+  message: 'Too many accounts created from this address. Try again later.',
+});
+// Login: limited per address and username (stops guessing one account) and,
+// more loosely, per address (stops trying many usernames)
+const loginAccountLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  key: (req) =>
+    `${req.ip}:${String(req.body?.username ?? '')
+      .slice(0, 64)
+      .toLowerCase()}`,
+  message: 'Too many sign-in attempts. Try again in a few minutes.',
+});
+const loginAddressLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: 'Too many sign-in attempts. Try again in a few minutes.',
+});
+
+// Checked against when the username doesn't exist, so a failed login takes as
+// long whether or not the account exists (otherwise the response time reveals
+// which usernames are registered)
+const dummyHash = hashPassword('not-a-real-password');
 
 const wrap = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
@@ -25,6 +54,7 @@ function validate(username, password) {
 
 router.post(
   '/register',
+  registerLimiter,
   wrap(async (req, res) => {
     const { username, password } = req.body ?? {};
     const error = validate(username, password);
@@ -56,15 +86,19 @@ router.post(
 
 router.post(
   '/login',
+  loginAddressLimiter,
+  loginAccountLimiter,
   wrap(async (req, res) => {
     const { username, password } = req.body ?? {};
     const user = await prisma.user.findUnique({
       where: { username: String(username ?? '') },
     });
 
-    const ok =
-      user && (await verifyPassword(String(password ?? ''), user.passwordHash));
-    if (!ok) {
+    const ok = await verifyPassword(
+      String(password ?? ''),
+      user ? user.passwordHash : await dummyHash
+    );
+    if (!user || !ok) {
       return res.status(401).json({ error: 'Incorrect username or password.' });
     }
 
