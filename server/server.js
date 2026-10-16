@@ -30,6 +30,8 @@ import express from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { requireAuth } from './middleware/auth.js';
+import { rateLimit } from './middleware/rateLimit.js';
+import { securityHeaders } from './middleware/securityHeaders.js';
 
 import { executePython } from './execution/pythonExecutor.js';
 import { removeOrphanedContainers } from './execution/dockerSandbox.js';
@@ -57,6 +59,8 @@ import groupRoutes, { ICON_DIR } from './routes/groups.js';
 import problemRoutes from './routes/problems.js';
 
 const app = express();
+app.disable('x-powered-by');
+app.use(securityHeaders);
 const port = process.env.PORT || 5000;
 
 if (!process.env.JWT_SECRET) {
@@ -159,7 +163,21 @@ app.use('/api/uploads/icons', express.static(ICON_DIR));
  * exit information, timeout information and runtime data.
  */
 
-app.post('/api/execute', requireAuth, async (req, res) => {
+// Each run starts a Docker container, so one user can only start so many
+const executeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  key: (req) => `execute:${req.user.id}`,
+  message: 'You are running code too quickly. Wait a moment and try again.',
+});
+const submitLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  key: (req) => `submit:${req.user.id}`,
+  message: 'You are submitting too quickly. Wait a moment and try again.',
+});
+
+app.post('/api/execute', requireAuth, executeLimiter, async (req, res) => {
   if (process.env.ENABLE_PYTHON_EXECUTION !== 'true') {
     return res.status(503).json({
       error: 'Python execution is not yet available.',
@@ -213,7 +231,7 @@ app.post('/api/execute', requireAuth, async (req, res) => {
  * Keep this endpoint disabled for untrusted users until
  * the Docker deployment and remaining security checks pass.
  */
-app.post('/api/submit', requireAuth, async (req, res) => {
+app.post('/api/submit', requireAuth, submitLimiter, async (req, res) => {
   if (process.env.ENABLE_SUBMISSION_GRADING !== 'true') {
     return res.status(503).json({
       success: false,
