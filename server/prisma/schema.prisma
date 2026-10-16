@@ -73,8 +73,19 @@ model Team {
   members     TeamMember[]
   invites     TeamInvite[]
   submissions Submission[]
+  files TeamFile[]
+  fileTree String?
 
   @@unique([groupId, name])
+}
+
+model TeamFile {
+  id      Int    @id @default(autoincrement())
+  teamId  Int
+  path    String
+  content String
+  team    Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  @@unique([teamId, path])
 }
 
 model TeamMember {
