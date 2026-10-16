@@ -46,6 +46,7 @@ import { applyOp, isValidOp, transform } from './lib/textOp.js';
 import { loadRoom, saveRoom } from './lib/roomStore.js';
 import { register, unregister } from './lib/notifier.js';
 import invitesRoutes from './routes/invites.js';
+import { MAIN_STUB, starterTree } from './lib/codebase.js';
 
 // The file-tree rules live next to the client's tree UI so both sides share them.
 import {

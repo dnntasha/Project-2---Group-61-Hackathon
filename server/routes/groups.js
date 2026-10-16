@@ -16,6 +16,7 @@ import {
 } from '../middleware/groups.js';
 import { getEndsAt, getEventStatus } from '../lib/eventTime.js';
 import { notifyInvitesChanged } from '../lib/notifier.js';
+import { createStarterCodebases } from '../lib/codebases.js';
 
 // Icons are saved in server/uploads/icons and served at /api/uploads/icons.
 export const ICON_DIR = fileURLToPath(
@@ -596,18 +597,24 @@ router.post(
       });
     }
 
-    const { count } = await prisma.group.updateMany({
-      where: {
-        id: req.group.id,
-        startedAt: null,
-      },
+    const started = await prisma.$transaction(async (tx) => {
+      const { count } = await tx.group.updateMany({
+        where: {
+          id: req.group.id,
+          startedAt: null,
+        },
 
-      data: {
-        startedAt: new Date(),
-      },
+        data: {
+          startedAt: new Date(),
+        },
+      });
+
+      if (count === 0) return false;
+      await createStarterCodebases(tx, req.group.id);
+      return true;
     });
 
-    if (count === 0) {
+    if (!started) {
       return res.status(409).json({
         error: 'The event has already started.',
       });
