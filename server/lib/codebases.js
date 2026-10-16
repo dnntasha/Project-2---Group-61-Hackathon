@@ -9,7 +9,7 @@
 import { createFileNode } from '../../client/src/components/FileTree/fileTreeUtils.js';
 
 //The stub every new codebase starts with
-export const MAIN_STUB = 'def main(): \n    pass\n';
+export const MAIN_STUB = 'def main():\n    pass\n';
 
 //A fresh tree: a root folder holding only main.py. Contents live separately
 export function starterTree() {

@@ -619,6 +619,12 @@ router.post(
       },
     });
 
+    const untested = await prisma.problem.findFirst({
+      where: { groupId: req.group.id, testCases: { none: {} } },
+      orderBy: { orderIndex: 'asc' },
+      select: { title: true },
+    });
+
     if (problemCount === 0) {
       return res.status(409).json({
         error: 'Add at least one problem before starting the event.',
@@ -628,6 +634,12 @@ router.post(
     if (req.group.topK > problemCount) {
       return res.status(409).json({
         error: `Scored problems (${req.group.topK}) cannot be more than the ${problemCount} problem(s) you have defined.`,
+      });
+    }
+
+    if (untested) {
+      return res.status(409).json({
+        error: `"${untested.title}" has no test cases yet. Add at least one before starting.`,
       });
     }
 
