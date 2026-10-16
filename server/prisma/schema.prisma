@@ -73,20 +73,43 @@ model Team {
   members     TeamMember[]
   invites     TeamInvite[]
   submissions Submission[]
-  files TeamFile[]
-  fileTree String?
+  codebases   Codebase[]
+  
+  activeProblemId Int?
+  activeProblem   Problem? @relation("ActiveProblem", fields: [activeProblemId], references: [id], onDelete: SetNull)
 
   @@unique([groupId, name])
 }
 
-model TeamFile {
-  id      Int    @id @default(autoincrement())
-  teamId  Int
-  path    String
-  content String
-  team    Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  @@unique([teamId, path])
+// One codebase per team per problem (spec 8 and 10). fileTree is the folder
+// structure as JSON; the contents of each file are CodebaseFile rows.
+model Codebase {
+  id        Int    @id @default(autoincrement())
+  teamId    Int
+  problemId Int
+  fileTree  String
+
+  team    Team           @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  problem Problem        @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  files   CodebaseFile[]
+
+  @@unique([teamId, problemId])
 }
+
+model CodebaseFile {
+  id         Int    @id @default(autoincrement())
+  codebaseId Int
+  path       String
+  content    String
+
+  codebase Codebase @relation(fields: [codebaseId], references: [id], onDelete: Cascade)
+
+  @@unique([codebaseId, path])
+}
+
+//removed the TeamFile because it only keeps 1 set of files per team so 
+//if you decided to write code for Problem 1 and switch to problemm 2 it would either be overwritten
+//or carry over
 
 model TeamMember {
   id       Int      @id @default(autoincrement())
@@ -141,6 +164,8 @@ model Problem {
   group       Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
   testCases   TestCase[]
   submissions Submission[]
+  codebases   Codebase[]
+  activeForTeams  Team[]   @relation("ActiveProblem")
 
   @@unique([groupId, orderIndex])
 }
