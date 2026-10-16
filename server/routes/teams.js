@@ -14,6 +14,29 @@ function httpError(status, message) {
   return Object.assign(new Error(message), { status });
 }
 
+// Deletes every pending team invitation a user holds in one group (optionally
+// keeping one) and returns the leaders of those teams, who should be told.
+// Called once the user has a team, so the old invitations stop taking up
+// places in other teams.
+async function releaseOtherInvites(tx, userId, groupId, keepInviteId) {
+  const others = await tx.teamInvite.findMany({
+    where: {
+      userId,
+      team: { groupId },
+      ...(keepInviteId === undefined ? {} : { id: { not: keepInviteId } }),
+    },
+    select: { id: true, team: { select: { leaderId: true } } },
+  });
+
+  if (others.length > 0) {
+    await tx.teamInvite.deleteMany({
+      where: { id: { in: others.map((invite) => invite.id) } },
+    });
+  }
+
+  return others.map((invite) => invite.team.leaderId);
+}
+
 // Get all teams for a group, plus the signed-in user's pending team invites.
 router.get('/group/:groupId', requireAuth, async (req, res, next) => {
   try {
@@ -44,6 +67,19 @@ router.get('/group/:groupId', requireAuth, async (req, res, next) => {
               select: {
                 id: true,
                 username: true,
+              },
+            },
+            invites: {
+              orderBy: {
+                createdAt: 'asc',
+              },
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    username: true,
+                  },
+                },
               },
             },
             members: {
@@ -132,6 +168,17 @@ router.get('/group/:groupId', requireAuth, async (req, res, next) => {
         leaderId: team.leaderId,
         leaderUsername: team.leader.username,
         members,
+        // Invitations still waiting for an answer. They take up places in the
+        // team, so everyone sees the count; only members see who was invited.
+        inviteCount: team.invites.length,
+        invites: isCurrentUserMember
+          ? team.invites.map((invite) => ({
+              id: invite.id,
+              userId: invite.user.id,
+              username: invite.user.username,
+              createdAt: invite.createdAt,
+            }))
+          : [],
         isCurrentUserMember,
         isCurrentUserLeader: team.leaderId === req.user.id,
       };
@@ -219,52 +266,66 @@ router.post('/', requireAuth, async (req, res, next) => {
 
     // Checked and created in one transaction so two quick requests can't put
     // the same user in two teams of this group
-    const team = await prisma.$transaction(async (tx) => {
-      const currentTeam = await tx.teamMember.findFirst({
-        where: {
-          userId: req.user.id,
-          team: {
-            groupId,
-          },
-        },
-      });
-
-      if (currentTeam) {
-        throw httpError(409, 'You are already part of a team in this group.');
-      }
-
-      const existingTeam = await tx.team.findUnique({
-        where: {
-          groupId_name: {
-            groupId,
-            name: trimmedName,
-          },
-        },
-      });
-
-      if (existingTeam) {
-        throw httpError(
-          409,
-          'A team with this name already exists in the group.'
-        );
-      }
-
-      return tx.team.create({
-        data: {
-          name: trimmedName,
-          groupId,
-          leaderId: req.user.id,
-          members: {
-            create: {
-              userId: req.user.id,
+    const { team, releasedLeaderIds } = await prisma.$transaction(
+      async (tx) => {
+        const currentTeam = await tx.teamMember.findFirst({
+          where: {
+            userId: req.user.id,
+            team: {
+              groupId,
             },
           },
-        },
-        include: {
-          members: true,
-        },
-      });
-    });
+        });
+
+        if (currentTeam) {
+          throw httpError(409, 'You are already part of a team in this group.');
+        }
+
+        const existingTeam = await tx.team.findUnique({
+          where: {
+            groupId_name: {
+              groupId,
+              name: trimmedName,
+            },
+          },
+        });
+
+        if (existingTeam) {
+          throw httpError(
+            409,
+            'A team with this name already exists in the group.'
+          );
+        }
+
+        const created = await tx.team.create({
+          data: {
+            name: trimmedName,
+            groupId,
+            leaderId: req.user.id,
+            members: {
+              create: {
+                userId: req.user.id,
+              },
+            },
+          },
+          include: {
+            members: true,
+          },
+        });
+
+        // Having a team of their own, the creator no longer needs invitations
+        // to other teams; leaving them would hold places in those teams
+        const releasedLeaderIds = await releaseOtherInvites(
+          tx,
+          req.user.id,
+          groupId
+        );
+
+        return { team: created, releasedLeaderIds };
+      }
+    );
+
+    notifyInvitesChanged(req.user.id, ...releasedLeaderIds);
 
     return res.status(201).json(team);
   } catch (err) {
@@ -399,11 +460,28 @@ router.post('/:teamId/invites', requireAuth, async (req, res, next) => {
       });
     }
 
-    const invite = await prisma.teamInvite.create({
-      data: {
-        teamId,
-        userId,
-      },
+    // The check above is only a quick, friendly early answer: it was made
+    // outside a transaction, so two leaders' requests could both pass it. The
+    // invitation is therefore created first (which takes the database's write
+    // lock) and the size re-counted, rolling back if the team is now too big.
+    const invite = await prisma.$transaction(async (tx) => {
+      const created = await tx.teamInvite.create({
+        data: {
+          teamId,
+          userId,
+        },
+      });
+
+      const [memberCount, inviteCount] = await Promise.all([
+        tx.teamMember.count({ where: { teamId } }),
+        tx.teamInvite.count({ where: { teamId } }),
+      ]);
+
+      if (memberCount + inviteCount > team.group.maxTeamSize) {
+        throw httpError(400, 'The team has reached its maximum size.');
+      }
+
+      return created;
     });
 
     // Push to the invitee (badge + invite list) and the leader (other tabs)
@@ -414,6 +492,73 @@ router.post('/:teamId/invites', requireAuth, async (req, res, next) => {
     next(err);
   }
 });
+
+// Cancel a pending team invite. Only the team leader can, and only before the
+// event starts. This frees the place the invitation was holding.
+router.delete(
+  '/:teamId/invites/:inviteId',
+  requireAuth,
+  async (req, res, next) => {
+    try {
+      const teamId = Number(req.params.teamId);
+      const inviteId = Number(req.params.inviteId);
+
+      if (!Number.isInteger(teamId) || !Number.isInteger(inviteId)) {
+        return res.status(400).json({
+          error: 'Invalid invitation.',
+        });
+      }
+
+      const invite = await prisma.teamInvite.findUnique({
+        where: {
+          id: inviteId,
+        },
+        include: {
+          team: {
+            include: {
+              group: true,
+            },
+          },
+        },
+      });
+
+      // An invite id belonging to another team is treated as not found
+      if (!invite || invite.teamId !== teamId) {
+        return res.status(404).json({
+          error: 'Invite not found.',
+        });
+      }
+
+      if (invite.team.leaderId !== req.user.id) {
+        return res.status(403).json({
+          error: 'Only the team leader can cancel invitations.',
+        });
+      }
+
+      if (hasStarted(invite.team.group)) {
+        return res.status(409).json({
+          error:
+            'The event has already started, so teams can no longer be changed.',
+        });
+      }
+
+      // deleteMany doesn't throw if the invitee accepted or declined meanwhile
+      await prisma.teamInvite.deleteMany({
+        where: {
+          id: inviteId,
+        },
+      });
+
+      notifyInvitesChanged(invite.userId, req.user.id);
+
+      return res.json({
+        message: 'Invitation cancelled.',
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 // Accept a team invite
 router.post(
@@ -463,50 +608,65 @@ router.post(
 
       // The membership and team-size checks run inside the transaction so
       // concurrent accepts can't overfill a team or double-book a user
-      const membership = await prisma.$transaction(async (tx) => {
-        const existingMembership = await tx.teamMember.findFirst({
-          where: {
-            userId: req.user.id,
-            team: {
-              groupId: invite.team.groupId,
+      const { membership, releasedLeaderIds } = await prisma.$transaction(
+        async (tx) => {
+          const existingMembership = await tx.teamMember.findFirst({
+            where: {
+              userId: req.user.id,
+              team: {
+                groupId: invite.team.groupId,
+              },
             },
-          },
-        });
+          });
 
-        if (existingMembership) {
-          throw httpError(409, 'You are already part of a team in this group.');
+          if (existingMembership) {
+            throw httpError(
+              409,
+              'You are already part of a team in this group.'
+            );
+          }
+
+          const memberCount = await tx.teamMember.count({
+            where: { teamId: invite.teamId },
+          });
+
+          if (memberCount >= invite.team.group.maxTeamSize) {
+            throw httpError(400, 'The team is already full.');
+          }
+
+          const newMember = await tx.teamMember.create({
+            data: {
+              teamId: invite.teamId,
+              userId: req.user.id,
+            },
+          });
+
+          await tx.teamInvite.delete({
+            where: {
+              id: inviteId,
+            },
+          });
+
+          // The user's other invitations in this group can never be used now,
+          // and would keep holding places in those teams, so they are removed
+          const releasedLeaderIds = await releaseOtherInvites(
+            tx,
+            req.user.id,
+            invite.team.groupId
+          );
+
+          return { membership: newMember, releasedLeaderIds };
         }
+      );
 
-        const memberCount = await tx.teamMember.count({
-          where: { teamId: invite.teamId },
-        });
-
-        if (memberCount >= invite.team.group.maxTeamSize) {
-          throw httpError(400, 'The team is already full.');
-        }
-
-        const newMember = await tx.teamMember.create({
-          data: {
-            teamId: invite.teamId,
-            userId: req.user.id,
-          },
-        });
-
-        await tx.teamInvite.delete({
-          where: {
-            id: inviteId,
-          },
-        });
-
-        return newMember;
-      });
-
-      // The accepter's other tabs, the leader, and everyone already on the
-      // team (`invite.team.members` was loaded before the new member joined)
+      // The accepter's other tabs, the leader, everyone already on the team
+      // (`invite.team.members` was loaded before the new member joined) and
+      // the leaders whose other invitations were just released
       notifyInvitesChanged(
         req.user.id,
         invite.team.leaderId,
-        ...invite.team.members.map((member) => member.userId)
+        ...invite.team.members.map((member) => member.userId),
+        ...releasedLeaderIds
       );
 
       return res.status(200).json(membership);

@@ -401,11 +401,38 @@ function TeamCard({ team, group, locked, maxTeamSize, onChanged }) {
   const [inviteBusy, setInviteBusy] = useState(false);
   const [leaveBusy, setLeaveBusy] = useState(false);
   const [leaveError, setLeaveError] = useState('');
+  const [cancelBusyId, setCancelBusyId] = useState(null);
 
+  // Pending invitations hold a place in the team just like members do, so the
+  // team counts as full when members + invitations reach the maximum
+  const placesUsed = team.members.length + team.inviteCount;
+  const isFull = placesUsed >= maxTeamSize;
+
+  // Group members who could still be invited: not on this team and not already
+  // invited to it
   const eligibleMembers = (group.members || []).filter(
     (groupMember) =>
-      !team.members.some((teamMember) => teamMember.id === groupMember.id)
+      !team.members.some((teamMember) => teamMember.id === groupMember.id) &&
+      !team.invites.some((invite) => invite.userId === groupMember.id)
   );
+
+  async function handleCancelInvite(inviteId) {
+    setInviteError('');
+    setInviteSuccess('');
+    setCancelBusyId(inviteId);
+
+    try {
+      await api(`/teams/${team.id}/invites/${inviteId}`, {
+        method: 'DELETE',
+      });
+
+      await onChanged();
+    } catch (err) {
+      setInviteError(err.message);
+    } finally {
+      setCancelBusyId(null);
+    }
+  }
 
   async function handleInvite(e) {
     e.preventDefault();
@@ -484,7 +511,8 @@ function TeamCard({ team, group, locked, maxTeamSize, onChanged }) {
           </div>
 
           <span className="member-meta">
-            {team.members.length}/{maxTeamSize} members · Leader:{' '}
+            {team.members.length}/{maxTeamSize} members
+            {team.inviteCount > 0 && ` · ${team.inviteCount} invited`} · Leader:{' '}
             {team.leaderUsername}
           </span>
         </div>
@@ -506,6 +534,35 @@ function TeamCard({ team, group, locked, maxTeamSize, onChanged }) {
         ))}
       </ul>
 
+      {team.invites.length > 0 && (
+        <ul className="team-member-list" aria-label="Pending invitations">
+          {team.invites.map((invite) => (
+            <li className="team-member-row" key={invite.id}>
+              <div className="team-member-name">
+                <div className="member-avatar member-avatar-small">
+                  {invite.username.charAt(0).toUpperCase()}
+                </div>
+
+                <span>{invite.username}</span>
+              </div>
+
+              <span className="member-badge">Invited</span>
+
+              {team.isCurrentUserLeader && !locked && (
+                <button
+                  className="btn-secondary btn-small"
+                  type="button"
+                  disabled={cancelBusyId === invite.id}
+                  onClick={() => handleCancelInvite(invite.id)}
+                >
+                  {cancelBusyId === invite.id ? 'Cancelling…' : 'Cancel'}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
       {team.isCurrentUserLeader && !locked && (
         <form className="team-member-invite" onSubmit={handleInvite}>
           <label>
@@ -518,7 +575,7 @@ function TeamCard({ team, group, locked, maxTeamSize, onChanged }) {
                   setInviteError('');
                   setInviteSuccess('');
                 }}
-                disabled={inviteBusy || team.members.length >= maxTeamSize}
+                disabled={inviteBusy || isFull}
                 required
               >
                 <option value="">Choose a member</option>
@@ -533,19 +590,21 @@ function TeamCard({ team, group, locked, maxTeamSize, onChanged }) {
               <button
                 className="btn-primary btn-small"
                 type="submit"
-                disabled={
-                  inviteBusy ||
-                  !inviteUserId ||
-                  team.members.length >= maxTeamSize
-                }
+                disabled={inviteBusy || !inviteUserId || isFull}
               >
                 {inviteBusy ? 'Sending…' : 'Invite'}
               </button>
             </div>
           </label>
 
-          {eligibleMembers.length === 0 && (
-            <p className="form-hint">No available group members to invite.</p>
+          {isFull ? (
+            <p className="form-hint">
+              The team is full. Cancel an invitation to free a place.
+            </p>
+          ) : (
+            eligibleMembers.length === 0 && (
+              <p className="form-hint">No available group members to invite.</p>
+            )
           )}
 
           {inviteError && (

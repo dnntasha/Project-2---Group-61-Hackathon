@@ -369,6 +369,28 @@ router.patch(
       data[field] = value;
     }
 
+    // A team's members plus its pending invitations must always fit within
+    // the maximum size, otherwise an invitee could fail to join. So the limit
+    // can't be lowered below what any team already has.
+    if (data.maxTeamSize !== undefined) {
+      const teams = await prisma.team.findMany({
+        where: { groupId: req.group.id },
+        select: {
+          name: true,
+          _count: { select: { members: true, invites: true } },
+        },
+      });
+
+      for (const team of teams) {
+        const used = team._count.members + team._count.invites;
+        if (used > data.maxTeamSize) {
+          return res.status(409).json({
+            error: `Team "${team.name}" already has ${used} members and pending invitations. Choose ${used} or more, or ask its leader to cancel invitations first.`,
+          });
+        }
+      }
+    }
+
     const group = await prisma.group.update({
       where: {
         id: req.group.id,
