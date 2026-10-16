@@ -64,18 +64,21 @@ This starts the backend (http://localhost:5000) and the client (http://localhost
 
 ### Scripts (run from the project root)
 
-| Command                             | What it does                                                         |
-| ----------------------------------- | -------------------------------------------------------------------- |
-| `npm run install:all`               | First-time setup (see above). Safe to re-run.                        |
-| `npm run dev`                       | Docker check, then backend and client.                               |
-| `npm run dev:server`                | Backend only (port from `server/.env`).                              |
-| `npm run dev:client`                | Client only.                                                         |
-| `npm test`                          | Server unit tests. Sandbox tests are skipped when Docker is off.     |
-| `npm run docker:check`              | Verify Docker only (doesn't start or pull anything).                 |
-| `npm run docker:setup`              | Start Docker if possible, pull the image, test the sandbox.          |
-| `npm run setup:backend`             | Recreate `.env` if missing, regenerate Prisma and sync the database. |
-| `npm run format`                    | Format everything with Prettier (`format:check` to only check).      |
-| `npm run db:studio --prefix server` | Browse the database in Prisma Studio.                                |
+| Command                             | What it does                                                                                            |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `npm run install:all`               | First-time setup (see above). Safe to re-run.                                                           |
+| `npm run dev`                       | Docker check, then backend and client.                                                                  |
+| `npm run dev:server`                | Backend only (port from `server/.env`).                                                                 |
+| `npm run dev:client`                | Client only.                                                                                            |
+| `npm test`                          | Server and client unit tests. Sandbox tests are skipped when Docker is off.                             |
+| `npm run lint`                      | ESLint on the server and the client.                                                                    |
+| `npm run build`                     | Build the client for production into `client/dist`.                                                     |
+| `npm start`                         | Build the client, then run the whole site from the backend (see [Production build](#production-build)). |
+| `npm run docker:check`              | Verify Docker only (doesn't start or pull anything).                                                    |
+| `npm run docker:setup`              | Start Docker if possible, pull the image, test the sandbox.                                             |
+| `npm run setup:backend`             | Recreate `.env` if missing, regenerate Prisma and sync the database.                                    |
+| `npm run format`                    | Format everything with Prettier (`format:check` to only check).                                         |
+| `npm run db:studio --prefix server` | Browse the database in Prisma Studio.                                                                   |
 
 A pre-commit hook (Husky + lint-staged) runs Prettier and ESLint on staged files.
 
@@ -89,12 +92,24 @@ A pre-commit hook (Husky + lint-staged) runs Prettier and ESLint on staged files
 | `ENABLE_PYTHON_EXECUTION`   | `true`          | Lets the editor's **Run Python** (and `POST /api/execute`) use the Docker sandbox.                |
 | `ENABLE_SUBMISSION_GRADING` | `false`         | Enables `POST /api/submit` (grading against the problem's test cases). The UI doesn't use it yet. |
 | `SANDBOX_CONCURRENCY`       | number of CPUs  | Optional. Most sandbox containers allowed to run at once.                                         |
+| `DISABLE_RATE_LIMIT`        | unset           | Optional. Set to `true` to switch off the request limits (for load tests).                        |
 
 Ports are fixed in `scripts/dev.mjs` (backend 5000, client 3000). If you need different ones, for example because macOS uses port 5000 for AirPlay, change `BASE_SERVER_PORT` there **and** `PORT` in your `server/.env`. Keep that change local and don't commit it.
 
+### Production build
+
+To run the site the way it would be deployed, with no Vite dev server:
+
+```bash
+npm run install:all   # once: dependencies, .env, database, Docker check
+npm start             # builds the client into client/dist, then starts the backend
+```
+
+Then open **http://localhost:5000**. The backend serves the built client and the API from the same port. To build without starting, use `npm run build`. If you change `server/prisma/schema.prisma` on a deployed database, apply the migrations with `npx prisma migrate deploy` (run from `server/`).
+
 ### Database
 
-The schema lives in `server/prisma/schema.prisma`, with its history in `server/prisma/migrations/`. Local setup applies the schema with `prisma db push`.
+The schema lives in `server/prisma/schema.prisma`, with its history in `server/prisma/migrations/`. Local setup applies the schema with `prisma db push`; `prisma migrate deploy` applies the migrations and gives the same result. The design, an ER diagram and a normal-form analysis of every table are in [docs/database-report.md](docs/database-report.md).
 
 When you change the schema, also add a migration for it. To generate the SQL without touching your database, run this from `server/`:
 
@@ -111,10 +126,15 @@ Save the output as `prisma/migrations/<timestamp>_<name>/migration.sql`, then de
 
 Every run starts a fresh `python:3.12-slim` container with these limits:
 
-- no network, 128 MB memory (no swap), half a CPU, 64 processes
-- read-only file system, no Linux capabilities, runs as user `nobody`
-- the code mounted read-only at `/app`
-- the time limit is enforced inside the container, and output is capped at 64 KB per stream
+- no network, no shared IPC, 128 MB memory (no swap), half a CPU, 64 processes
+- read-only file system apart from a 16 MB `/tmp` that cannot run programs, no Linux capabilities, `no-new-privileges`, runs as user `nobody`
+- at most 64 open files, no files over 16 MB, no core dumps
+- the code mounted read-only at `/app`; the image is never pulled while grading
+- the time limit is enforced inside the container, output is capped at 64 KB per stream, and Docker keeps no logs of it
+
+When a program is graded, `main.py` is loaded and its `main()` function is called once. A run that is stopped is reported with its cause: time limit, output limit, memory limit (the container was killed for running out of memory), or process limit.
+
+Beyond Docker, the API also limits requests (sign-in attempts per address and username, account creation, code runs and submissions per user), sets security headers, checks that an uploaded group icon really is the image type it claims to be, and re-checks every open WebSocket in the background, closing it when its sign-in has expired or its user has left the team.
 
 Containers are removed after each run. Any left behind by a crash or restart are removed when the server next starts. You can list them with `docker ps -a --filter label=cs343-sandbox`.
 
@@ -137,7 +157,9 @@ Everything works except running code.
 | `[docker] Docker daemon is not running`               | Start Docker Desktop or Rancher Desktop, then run `npm run docker:setup`.                                                                                  |
 | Prisma `EPERM` on Windows during setup                | The server is still running and holding the Prisma engine. Stop it and re-run `npm run setup:backend`.                                                     |
 | Editor says "You are not in a team yet"               | Create or join a team on the group's page first. Editor rooms are per team.                                                                                |
-| Editor disconnected after a backend restart           | Reload the page. Room contents live in memory and are reset when the backend restarts.                                                                     |
+| Editor says "Reconnecting..." after a backend restart | It reconnects on its own. Saved work is kept in the database; only changes typed in the last second or two before the restart are lost.                    |
+| Editor is read-only                                   | The code can only be changed while the event is running (after the admin starts it and before the duration is up).                                         |
+| Sign-in attempts are refused with "Too many"          | The sign-in limit allows 10 tries per username per 15 minutes. Wait, or set `DISABLE_RATE_LIMIT=true` for local testing.                                   |
 
 ## Project layout
 
@@ -153,6 +175,7 @@ server/                 Express + WebSocket backend
   evaluation/           grading a submitted codebase against test cases
   submission/           submission eligibility, reservation and results
   prisma/schema.prisma  database schema
+docs/                   database report (ER diagram, normal forms)
 scripts/                dev runner, Docker check, .env setup
 ```
 
@@ -169,3 +192,6 @@ The scripts in `server/submission/test*.js` are manual checks that write to the 
 - ChatGPT was used to assist with planning, implementation guidance, debugging, documentation and testing of the file tree, Python execution, test evaluation, submission processing, response area and submission timeline. AI-assisted suggestions were reviewed, adapted and tested before being committed.
 - Claude was used for assistance with development and implementation of synced code editor (such that changes made by one person are reflected on the other persons side (using websockets))
 - Claude was used to audit the codebase after merging and to fix integration issues (team routes, editor rooms, WebSocket safety, Docker sandbox, submission checks, duplicate UI) and to rewrite this README's setup instructions
+- Generative AI was used to help address integration issues and bugfixes
+- Claude Code was used to compare the project against the specification and then fix the gaps it found: calling `main()` when grading and reporting every test when `main.py` or `main()` is missing; locking the editor to the event window; re-checking team membership and sessions on open WebSockets; grading the team's saved code instead of code sent by the client; making team invitations race-safe with a cancel option; the leave-team transaction; sliding session expiry and expired-session cleanup; clearer failure reasons (memory and process limits); sandbox hardening, rate limiting, security headers and an icon signature check; editor reconnecting and indentation fixes; the missing migration, the production build and these docs
+- Claude Code also wrote the first draft of `docs/database-report.md` from the Prisma schema, and the unit tests for the changes above
