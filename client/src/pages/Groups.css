@@ -156,27 +156,48 @@
   }
 }
 
-/* ---- Create group ---- */
+/* ---- Groups overview ---- */
 
-.group-create {
-  margin: 20px 0 28px;
+.groups-header {
+  margin-bottom: 24px;
 }
 
-.group-create label {
-  display: block;
-  font-weight: 500;
-  color: var(--text-h);
-  margin-bottom: 6px;
+.groups-header h1 {
+  margin: 0 0 10px;
+}
+
+.groups-header p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.group-create {
+  margin-bottom: 28px;
 }
 
 .group-create-row {
   display: flex;
   gap: 8px;
+  margin-top: 14px;
 }
 
 .group-create-row input {
   flex: 1;
   min-width: 0;
+}
+
+.groups-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.groups-list-heading h2 {
+  margin: 0;
 }
 
 /* ---- Group list ---- */
@@ -197,9 +218,9 @@
   font: inherit;
   text-align: left;
   color: var(--text-h);
-  background: var(--bg);
+  background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 12px 14px;
   cursor: pointer;
 }
