@@ -16,19 +16,22 @@ const STATUS_TEXT = {
 const FIELDS = [
   {
     key: 'durationMin',
-    label: 'Event duration (minutes)',
+    label: 'Event duration',
+    hint: 'How long the event runs once started, in minutes.',
     min: 10,
     max: 1440,
   },
   {
     key: 'maxTeamSize',
     label: 'Maximum team size',
+    hint: 'The most members a team can have, including pending invites.',
     min: 1,
     max: 10,
   },
   {
     key: 'topK',
-    label: 'Problems counted in final score',
+    label: 'Problems counted in score',
+    hint: "Only a team's best results on this many problems count.",
     min: 1,
     max: 50,
   },
@@ -37,6 +40,7 @@ const FIELDS = [
 export default function GroupPage({ groupId, onBack }) {
   const [group, setGroup] = useState(null);
   const [loadError, setLoadError] = useState('');
+  const [tab, setTab] = useState('members');
 
   useEffect(() => {
     api(`/groups/${groupId}`)
@@ -50,9 +54,20 @@ export default function GroupPage({ groupId, onBack }) {
     setGroup((current) => ({ ...current, ...updated }));
   }, []);
 
+  // Only the admin gets the problems and settings pages
+  const tabs = group?.isAdmin
+    ? [
+        { key: 'members', label: 'Members & teams' },
+        { key: 'problems', label: 'Problems' },
+        { key: 'settings', label: 'Settings' },
+      ]
+    : [{ key: 'members', label: 'Members & teams' }];
+
+  const activeTab = tabs.some(({ key }) => key === tab) ? tab : 'members';
+
   return (
     <section className="groups page-enter">
-      <button className="link-button" onClick={onBack}>
+      <button className="back-button" onClick={onBack}>
         ← All groups
       </button>
 
@@ -60,7 +75,7 @@ export default function GroupPage({ groupId, onBack }) {
       {!group && !loadError && <p className="muted">Loading…</p>}
 
       {group && (
-        <>
+        <div className="group-container">
           <header className="group-heading">
             <GroupIcon group={group} size={56} />
 
@@ -71,6 +86,10 @@ export default function GroupPage({ groupId, onBack }) {
                 {STATUS_TEXT[group.status]}
               </p>
             </div>
+
+            {group.isAdmin && group.status === 'not-started' && (
+              <StartEvent group={group} onStarted={mergeGroup} />
+            )}
 
             {group.status === 'running' && (
               <Countdown
@@ -86,25 +105,41 @@ export default function GroupPage({ groupId, onBack }) {
             )}
           </header>
 
-          {group.isAdmin && group.status === 'not-started' && (
-            <StartEvent group={group} onStarted={mergeGroup} />
+          {tabs.length > 1 && (
+            <div className="group-tabs" role="tablist">
+              {tabs.map(({ key, label }) => (
+                <button
+                  key={key}
+                  role="tab"
+                  type="button"
+                  aria-selected={activeTab === key}
+                  className={`group-tab ${
+                    activeTab === key ? 'group-tab-active' : ''
+                  }`}
+                  onClick={() => setTab(key)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           )}
 
-          <GroupMembers group={group} />
+          {activeTab === 'members' && (
+            <>
+              <GroupMembers group={group} />
+              <TeamsPanel group={group} />
+            </>
+          )}
 
-          <TeamsPanel group={group} />
+          {activeTab === 'problems' && <ProblemsPanel group={group} />}
 
-          {group.isAdmin ? (
+          {activeTab === 'settings' && (
             <>
               <IconUpload group={group} onSaved={mergeGroup} />
               <SettingsForm group={group} onSaved={mergeGroup} />
             </>
-          ) : (
-            <SettingsSummary group={group} />
           )}
-
-          <ProblemsPanel group={group} />
-        </>
+        </div>
       )}
     </section>
   );
@@ -137,15 +172,7 @@ function StartEvent({ group, onStarted }) {
   }
 
   return (
-    <div className="panel panel-start">
-      <div>
-        <h2>Start the event</h2>
-        <p className="form-hint">
-          Runs for {group.durationMin} minutes. Teams lock and problems become
-          visible.
-        </p>
-      </div>
-
+    <div className="start-event">
       <button className="btn-primary" onClick={handleStart} disabled={busy}>
         {busy ? 'Starting...' : 'Start event'}
       </button>
@@ -214,6 +241,8 @@ function TeamsPanel({ group }) {
             onChanged={loadTeams}
           />
 
+          {locked && teamData.currentTeamId && <AssignedProblem />}
+
           {!locked && !teamData.currentTeamId && (
             <CreateTeam group={group} onCreated={loadTeams} />
           )}
@@ -244,6 +273,19 @@ function TeamsPanel({ group }) {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+// Problems are assigned to teams by a later feature; until then there is
+// nothing to show
+function AssignedProblem() {
+  return (
+    <div className="team-card team-card-current">
+      <h3>Your team&apos;s problem</h3>
+      <p className="form-hint">
+        No problem has been assigned to your team yet.
+      </p>
     </div>
   );
 }
@@ -758,10 +800,13 @@ function SettingsForm({ group, onSaved }) {
         <p className="form-hint">Settings are locked once the event starts.</p>
       )}
 
-      <div className="settings-grid">
-        {FIELDS.map(({ key, label, min, max }) => (
-          <label key={key}>
-            {label}
+      <div className="settings-list">
+        {FIELDS.map(({ key, label, hint, min, max }) => (
+          <label className="settings-row" key={key}>
+            <span className="settings-row-text">
+              <span className="settings-row-label">{label}</span>
+              <span className="form-hint">{hint}</span>
+            </span>
 
             <input
               type="number"
@@ -793,22 +838,5 @@ function SettingsForm({ group, onSaved }) {
         </div>
       )}
     </form>
-  );
-}
-
-function SettingsSummary({ group }) {
-  return (
-    <div className="panel">
-      <h2>Event settings</h2>
-
-      <dl className="settings-summary">
-        {FIELDS.map(({ key, label }) => (
-          <div key={key}>
-            <dt>{label}</dt>
-            <dd>{group[key]}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
   );
 }
