@@ -22,19 +22,40 @@ import './CodeEditor.css';
 // The file that is open when the editor first loads
 const DEFAULT_FILE = 'main.py';
 
+// Reconnect delays: start at 1s, double each failed attempt, cap at 15s
+const MIN_RETRY_MS = 1000;
+const MAX_RETRY_MS = 15000;
+// Close codes after which reconnecting can't help: the server refused the room
+// (1008), the sign-in expired (4001) or the user was removed from the team
+// (4003). Any other close (network drop, server restart) is retried.
+const NO_RECONNECT_CODES = new Set([1003, 1008, 4001, 4003]);
+
 // Builds the WebSocket URL, defaulting to ws(s)://<current host>/ws.
-// The session token is passed as a query param because browsers can't set
-// custom headers on WebSocket connections.
 function getWebSocketUrl(wsUrl, roomId, problemId) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const url = new URL(wsUrl || `${protocol}//${window.location.host}/ws`);
-  const token = getToken();
 
-  if (token) url.searchParams.set('token', token);
   url.searchParams.set('roomId', roomId);
   url.searchParams.set('problemId', problemId);
   return url.toString();
 }
+
+// Opens the socket. Browsers can't set headers on a WebSocket, so the session
+// token is sent as a second subprotocol rather than in the URL, where it would
+// be written to server and proxy logs.
+function openEditorSocket(wsUrl, roomId, problemId) {
+  return new WebSocket(getWebSocketUrl(wsUrl, roomId, problemId), [
+    'bearer',
+    getToken() ?? '',
+  ]);
+}
+
+// What to tell the user while the code is read-only
+const READ_ONLY_NOTICES = {
+  'not-started':
+    'The event has not started yet. You can look around, but the code is read-only until the admin starts it.',
+  ended: 'The event has ended. The code is now read-only.',
+};
 
 // Formats a RUN_RESULTS message as the text shown in the terminal panel
 function getRunOutput(message) {
@@ -156,6 +177,11 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   // The room's shared file tree (null until the server sends it)
   const [tree, setTree] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
+  // True while waiting to retry after the connection dropped
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  // 'not-started' | 'running' | 'ended', as last reported by the server (null
+  // until it has said). The code can only be changed while it is 'running'.
+  const [eventStatus, setEventStatus] = useState(null);
   const [isReady, setIsReady] = useState(false);
   const [isFileLoading, setIsFileLoading] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
@@ -364,6 +390,16 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
         // Full room state on connect: show the active file, or request it if
         // the room doesn't have it yet
         case 'INIT_CODEBASE': {
+          // After a reconnect, anything typed that never reached the server is
+          // replaced by the team's version; say so rather than lose it quietly
+          const unsynced = [...filesRef.current.values()].filter(
+            (file) => file.outstanding || file.buffer
+          ).length;
+          if (unsynced > 0) {
+            setTerminalOutput(
+              `Reconnected. ${unsynced} file${unsynced === 1 ? '' : 's'} had changes that could not be sent and were reset to the team's version.`
+            );
+          }
           filesRef.current = new Map();
           treeRef.current = message.tree;
           setTree(message.tree);
@@ -414,6 +450,11 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
           setTerminalOutput(message.message);
           break;
 
+        // The event started or ended (also sent once on connecting)
+        case 'EVENT_STATUS':
+          setEventStatus(message.status);
+          break;
+
         // A rejected edit would stay outstanding forever and block all further
         // syncing of that file, so drop our copy and fetch the server's
         case 'ERROR': {
@@ -440,10 +481,14 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   );
 
   // Open the socket when the room/problem/url changes and close it on cleanup.
+  // If the connection drops (network blip, server restart) it is reopened with
+  // a growing delay; the server then sends the room again from scratch.
   // `active` guards against callbacks firing after the effect was cleaned up.
   useEffect(() => {
     let active = true;
-    let socket;
+    let socket = null;
+    let retryTimer = null;
+    let retryDelay = MIN_RETRY_MS;
 
     // Start every room from a clean slate so nothing from the previous room
     // can be edited (and then lost) while the new one connects
@@ -455,6 +500,8 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
     setCode('');
     setActiveFilePath(DEFAULT_FILE);
     setIsConnected(false);
+    setIsReconnecting(false);
+    setEventStatus(null);
     setIsReady(false);
     setIsRunning(false);
     setIsFileLoading(false);
@@ -465,65 +512,79 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
       return undefined;
     }
 
-    try {
-      socket = new WebSocket(getWebSocketUrl(wsUrl, activeRoomId, problemId));
-    } catch (error) {
-      setTerminalOutput(`Could not connect to the editor: ${error.message}`);
-      return undefined;
-    }
-
-    socketRef.current = socket;
-
-    socket.onopen = () => {
-      if (!active) return;
-      setIsConnected(true);
-      setTerminalOutput(`Connected to shared room: ${activeRoomId}`);
-      socket.send(JSON.stringify({ type: 'SYNC_INIT' }));
-    };
-
-    socket.onmessage = (event) => {
-      if (!active) return;
+    function connect() {
       try {
-        handleIncomingMessage(JSON.parse(event.data));
+        socket = openEditorSocket(wsUrl, activeRoomId, problemId);
       } catch (error) {
-        console.error('Failed to process WebSocket message:', error);
-        setTerminalOutput(
-          'Received an invalid response from the editor server.'
-        );
-      }
-    };
-
-    socket.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      if (active) {
-        setTerminalOutput(
-          'WebSocket connection failed. Check the server and sign-in.'
-        );
-      }
-    };
-
-    socket.onclose = (event) => {
-      if (!active) return;
-      setIsConnected(false);
-      setIsReady(false);
-      setIsRunning(false);
-      if (event.code === 4001) {
-        setTerminalOutput(
-          'Your sign-in has expired. Sign in again to use the editor.'
-        );
-        window.dispatchEvent(new Event('auth:expired'));
+        setTerminalOutput(`Could not connect to the editor: ${error.message}`);
         return;
       }
-      setTerminalOutput(
-        event.reason
-          ? `Disconnected from the editor server: ${event.reason}`
-          : 'Disconnected from the editor server. Reload the page to reconnect.'
-      );
-    };
+      const thisSocket = socket;
+      socketRef.current = thisSocket;
+
+      thisSocket.onopen = () => {
+        if (!active) return;
+        retryDelay = MIN_RETRY_MS;
+        setIsConnected(true);
+        setIsReconnecting(false);
+        setTerminalOutput(`Connected to shared room: ${activeRoomId}`);
+        thisSocket.send(JSON.stringify({ type: 'SYNC_INIT' }));
+      };
+
+      thisSocket.onmessage = (event) => {
+        if (!active) return;
+        try {
+          handleIncomingMessage(JSON.parse(event.data));
+        } catch (error) {
+          console.error('Failed to process WebSocket message:', error);
+          setTerminalOutput(
+            'Received an invalid response from the editor server.'
+          );
+        }
+      };
+
+      thisSocket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+      };
+
+      thisSocket.onclose = (event) => {
+        if (!active) return;
+        setIsConnected(false);
+        setIsReady(false);
+        setIsRunning(false);
+
+        if (event.code === 4001) {
+          setTerminalOutput(
+            'Your sign-in has expired. Sign in again to use the editor.'
+          );
+          window.dispatchEvent(new Event('auth:expired'));
+          return;
+        }
+        if (NO_RECONNECT_CODES.has(event.code)) {
+          setTerminalOutput(
+            event.reason
+              ? `Disconnected from the editor server: ${event.reason}`
+              : 'Disconnected from the editor server.'
+          );
+          return;
+        }
+
+        // Anything else is probably temporary: try again shortly. The text is
+        // read-only until then (isReady is false), so nothing is typed into a
+        // connection that can't deliver it.
+        setIsReconnecting(true);
+        setTerminalOutput('Connection lost. Reconnecting...');
+        retryTimer = setTimeout(connect, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
+      };
+    }
+
+    connect();
 
     return () => {
       active = false;
-      socket.close();
+      clearTimeout(retryTimer);
+      socket?.close();
       if (socketRef.current === socket) socketRef.current = null;
     };
   }, [activeRoomId, handleIncomingMessage, problemId, wsUrl]);
@@ -661,6 +722,11 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
     }
   };
 
+  // The code can only be changed once the room is loaded and the event is on
+  const isEditable = isReady && eventStatus === 'running';
+  const readOnlyNotice =
+    isConnected && eventStatus ? READ_ONLY_NOTICES[eventStatus] : null;
+
   // With no room there is no socket to report on, so say what is needed
   const statusText =
     activeRoomId || teamsLoading
@@ -683,7 +749,11 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
               aria-hidden="true"
             />
             <span role="status">
-              {isConnected ? 'Connected' : 'Disconnected'}
+              {isConnected
+                ? 'Connected'
+                : isReconnecting
+                  ? 'Reconnecting...'
+                  : 'Disconnected'}
             </span>
           </div>
           <div className="editor-room">
@@ -729,7 +799,7 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
             className="editor-btn editor-btn-primary"
             type="button"
             onClick={handleRunCode}
-            disabled={!isReady || isRunning || isFileLoading}
+            disabled={!isEditable || isRunning || isFileLoading}
           >
             {isRunning ? 'Running...' : 'Run Python'}
           </button>
@@ -744,6 +814,12 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
         </div>
       </header>
 
+      {readOnlyNotice && (
+        <p className="editor-notice" role="status">
+          {readOnlyNotice}
+        </p>
+      )}
+
       <div className="editor-body">
         <aside className="editor-sidebar">
           {activeRoomId || teamsLoading ? (
@@ -752,6 +828,7 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
               onOperation={handleTreeOperation}
               onSelectFile={handleSelectFile}
               selectedPath={activeFilePath}
+              readOnly={eventStatus !== 'running'}
             />
           ) : (
             <p className="editor-no-team">No team selected.</p>
@@ -770,6 +847,7 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
             className="code-input"
             aria-label={`Python source code in ${activeFilePath}`}
             disabled={!isReady || isFileLoading}
+            readOnly={!isEditable}
           />
           <section className="terminal-panel" aria-label="Execution output">
             <div className="terminal-header">Python output</div>

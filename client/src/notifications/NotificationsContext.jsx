@@ -27,13 +27,15 @@ const NotificationsContext = createContext({ pendingCount: 0, tick: 0 });
 const MIN_RETRY_MS = 1000;
 const MAX_RETRY_MS = 15000;
 
-// Same URL logic as the editor: ws(s)://<current host>/ws/notifications, with
-// the session token as a query param (browsers can't set WebSocket headers)
-function getNotificationsUrl() {
+// Same URL logic as the editor: ws(s)://<current host>/ws/notifications.
+// Browsers can't set headers on a WebSocket, so the session token travels as a
+// second subprotocol, which keeps it out of the URL (and so out of server logs).
+function openNotificationsSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = new URL(`${protocol}//${window.location.host}/ws/notifications`);
-  url.searchParams.set('token', getToken() ?? '');
-  return url.toString();
+  return new WebSocket(
+    `${protocol}//${window.location.host}/ws/notifications`,
+    ['bearer', getToken() ?? '']
+  );
 }
 
 export function NotificationsProvider({ children }) {
@@ -64,7 +66,7 @@ export function NotificationsProvider({ children }) {
     let stopped = false; // set by cleanup so we don't reconnect after unmount
 
     function connect() {
-      socket = new WebSocket(getNotificationsUrl());
+      socket = openNotificationsSocket();
 
       socket.onopen = () => {
         retryDelay = MIN_RETRY_MS;
@@ -87,8 +89,13 @@ export function NotificationsProvider({ children }) {
       };
 
       socket.onclose = (event) => {
-        // 4001 = the server rejected our sign-in; reconnecting can't help
-        if (stopped || event.code === 4001) return;
+        if (stopped) return;
+        // 4001 = the server rejected our sign-in (it expired); reconnecting
+        // can't help, so send the user back to the sign-in page
+        if (event.code === 4001) {
+          window.dispatchEvent(new Event('auth:expired'));
+          return;
+        }
         retryTimer = setTimeout(connect, retryDelay);
         retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
       };

@@ -18,6 +18,7 @@ function FileTreeNode({
   onMove,
   onSelectFile,
   selectedPath,
+  readOnly,
   path,
 }) {
   const [isOpen, setIsOpen] = useState(true);
@@ -56,31 +57,41 @@ function FileTreeNode({
           </button>
         )}
 
-        <button type="button" onClick={() => onRename(node.id, node.name)}>
-          Rename
-        </button>
-
-        {node.id !== 'root' && (
-          <button type="button" onClick={() => onMove(node.id)}>
-            Move
-          </button>
-        )}
-
-        {node.id !== 'root' && (
-          <button type="button" onClick={() => onDelete(node.id, node.name)}>
-            Delete
-          </button>
-        )}
-
-        {isDirectory && (
+        {!readOnly && (
           <>
-            <button type="button" onClick={() => onCreateFile(node.id)}>
-              + File
+            <button type="button" onClick={() => onRename(node.id, node.name)}>
+              Rename
             </button>
 
-            <button type="button" onClick={() => onCreateDirectory(node.id)}>
-              + Folder
-            </button>
+            {node.id !== 'root' && (
+              <button type="button" onClick={() => onMove(node.id)}>
+                Move
+              </button>
+            )}
+
+            {node.id !== 'root' && (
+              <button
+                type="button"
+                onClick={() => onDelete(node.id, node.name)}
+              >
+                Delete
+              </button>
+            )}
+
+            {isDirectory && (
+              <>
+                <button type="button" onClick={() => onCreateFile(node.id)}>
+                  + File
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onCreateDirectory(node.id)}
+                >
+                  + Folder
+                </button>
+              </>
+            )}
           </>
         )}
       </div>
@@ -98,6 +109,7 @@ function FileTreeNode({
               onMove={onMove}
               onSelectFile={onSelectFile}
               selectedPath={selectedPath}
+              readOnly={readOnly}
               path={nodePath}
             />
           ))}

@@ -21,6 +21,9 @@ import './FileTree.css';
  * validated here for quick feedback, then sent as operations through
  * `onOperation`; the tree only changes when the server sends the result back.
  *
+ * `readOnly` hides the buttons that change the tree, so it can still be browsed
+ * (and files opened) while the room is locked.
+ *
  * Local mode (no props): the tree lives in this component's state and
  * operations are applied immediately with the same rules the server uses.
  *
@@ -33,6 +36,7 @@ function FileTree({
   onOperation,
   onSelectFile,
   selectedPath,
+  readOnly = false,
 }) {
   const isShared = Boolean(onOperation);
   const [localTree, setLocalTree] = useState(() => ({
@@ -220,6 +224,7 @@ function FileTree({
           onMove={handleMove}
           onSelectFile={onSelectFile} //adds functionality of selecting files
           selectedPath={selectedPath} // highlights the open file
+          readOnly={readOnly}
           path=""
         />
       )}

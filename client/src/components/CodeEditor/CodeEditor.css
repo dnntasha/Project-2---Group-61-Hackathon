@@ -19,6 +19,20 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* Shown while the code is read-only (before the event starts, after it ends) */
+.editor-notice {
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.code-input[readonly] {
+  cursor: not-allowed;
+}
+
 .editor-title {
   display: flex;
   align-items: center;
