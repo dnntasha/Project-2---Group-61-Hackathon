@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 import { hasStarted } from '../middleware/groups.js';
 import { notifyInvitesChanged } from '../lib/notifier.js';
+import { closeTeamRoom, removeUserFromTeamRoom } from '../lib/roomAccess.js';
 
 const router = Router();
 
@@ -747,11 +748,6 @@ router.post('/:teamId/leave', requireAuth, async (req, res, next) => {
       },
       include: {
         group: true,
-        members: {
-          orderBy: {
-            joinedAt: 'asc',
-          },
-        },
       },
     });
 
@@ -767,67 +763,117 @@ router.post('/:teamId/leave', requireAuth, async (req, res, next) => {
       });
     }
 
-    const membership = team.members.find(
-      (member) => member.userId === req.user.id
-    );
-
-    if (!membership) {
-      return res.status(403).json({
-        error: 'You are not a member of this team.',
-      });
-    }
-
-    if (team.members.length === 1) {
-      await prisma.team.delete({
+    // Everything that depends on who is left happens in one transaction, and
+    // the member is removed first. That takes the database's write lock, so
+    // two people leaving at the same moment are handled one after the other:
+    // the second one sees the first one already gone. (Reading the members
+    // before the transaction let a leader and the last other member both
+    // leave and strand an empty team.)
+    const outcome = await prisma.$transaction(async (tx) => {
+      const removed = await tx.teamMember.deleteMany({
         where: {
-          id: teamId,
+          teamId,
+          userId: req.user.id,
         },
       });
 
+      if (removed.count === 0) {
+        throw httpError(403, 'You are not a member of this team.');
+      }
+
+      const remaining = await tx.teamMember.findMany({
+        where: {
+          teamId,
+        },
+        orderBy: {
+          joinedAt: 'asc',
+        },
+      });
+
+      // Pending invitees of a team that is about to disappear
+      if (remaining.length === 0) {
+        const invites = await tx.teamInvite.findMany({
+          where: {
+            teamId,
+          },
+          select: {
+            userId: true,
+          },
+        });
+
+        await tx.team.delete({
+          where: {
+            id: teamId,
+          },
+        });
+
+        return {
+          deleted: true,
+          remainingIds: [],
+          inviteeIds: invites.map((invite) => invite.userId),
+        };
+      }
+
+      const current = await tx.team.findUnique({
+        where: {
+          id: teamId,
+        },
+        select: {
+          leaderId: true,
+        },
+      });
+
+      let newLeaderId = null;
+
+      // The leader left: the member who has been on the team longest takes over
+      if (current.leaderId === req.user.id) {
+        newLeaderId = remaining[0].userId;
+
+        await tx.team.update({
+          where: {
+            id: teamId,
+          },
+          data: {
+            leaderId: newLeaderId,
+          },
+        });
+      }
+
+      return {
+        deleted: false,
+        newLeaderId,
+        remainingIds: remaining.map((member) => member.userId),
+        inviteeIds: [],
+      };
+    });
+
+    // Cut the leaver off from the team's editor room right away
+    removeUserFromTeamRoom(teamId, req.user.id);
+
+    if (outcome.deleted) {
+      closeTeamRoom(teamId);
+    }
+
+    // The leaver's other tabs, the people still on the team, and the invitees
+    // of a team that no longer exists all need to refresh
+    notifyInvitesChanged(
+      req.user.id,
+      ...outcome.remainingIds,
+      ...outcome.inviteeIds
+    );
+
+    if (outcome.deleted) {
       return res.json({
         message: 'You left the team. The empty team was deleted.',
       });
     }
 
-    if (team.leaderId === req.user.id) {
-      const newLeader = team.members.find(
-        (member) => member.userId !== req.user.id
-      );
-
-      await prisma.$transaction([
-        prisma.team.update({
-          where: {
-            id: teamId,
-          },
-          data: {
-            leaderId: newLeader.userId,
-          },
-        }),
-
-        prisma.teamMember.delete({
-          where: {
-            teamId_userId: {
-              teamId,
-              userId: req.user.id,
-            },
-          },
-        }),
-      ]);
-
+    if (outcome.newLeaderId !== null) {
       return res.json({
         message: 'You left the team and leadership was transferred.',
-        newLeaderId: newLeader.userId,
+        newLeaderId: outcome.newLeaderId,
       });
     }
-
-    await prisma.teamMember.delete({
-      where: {
-        teamId_userId: {
-          teamId,
-          userId: req.user.id,
-        },
-      },
-    });
 
     return res.json({
       message: 'You left the team.',
