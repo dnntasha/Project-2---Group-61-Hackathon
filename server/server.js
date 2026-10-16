@@ -17,7 +17,14 @@
  * transformed operation to everyone else in the room. This lets several users
  * type in the same file at once without losing anyone's changes. If an
  * operation can't be reconciled the sender gets a full snapshot to resync.
- * Room state is not persisted and is lost on restart.
+ * Room state is saved to the database (see lib/roomStore.js): shortly after
+ * every change, when the last client leaves, and on shutdown. A room is loaded
+ * back from the database the first time someone connects after a restart.
+ * Only file contents and the tree are saved; OT revision history is not, so
+ * revisions restart from 0 (clients resync from a snapshot on connect).
+ *
+ * A second WebSocket endpoint, /ws/notifications, carries per-user push events
+ * (e.g. "your invites changed") - see lib/notifier.js.
  */
 import express from 'express';
 import http from 'http';
@@ -25,15 +32,20 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { requireAuth } from './middleware/auth.js';
 
 import { executePython } from './execution/pythonExecutor.js';
+import { removeOrphanedContainers } from './execution/dockerSandbox.js';
 import authRoutes from './routes/auth.js';
-// import teamRoutes from './routes/teams.js'; // disabled with the teams route below
+import teamRoutes from './routes/teams.js';
 import leaderboardRoutes from './routes/leaderboards.js';
 import { authenticate } from './lib/sessions.js';
 import { prisma } from './lib/prisma.js';
 
 import { processSubmission } from './submission/submissionService.js';
+import { failInterruptedSubmissions } from './submission/submissionResults.js';
 import { runPython } from './lib/pythonRunner.js';
 import { applyOp, isValidOp, transform } from './lib/textOp.js';
+import { loadRoom, saveRoom } from './lib/roomStore.js';
+import { register, unregister } from './lib/notifier.js';
+import invitesRoutes from './routes/invites.js';
 
 // The file-tree rules live next to the client's tree UI so both sides share them.
 import {
@@ -45,7 +57,14 @@ import groupRoutes, { ICON_DIR } from './routes/groups.js';
 import problemRoutes from './routes/problems.js';
 
 const app = express();
-const port = process.env.PORT || 5001;
+const port = process.env.PORT || 5000;
+
+if (!process.env.JWT_SECRET) {
+  console.error(
+    'JWT_SECRET is not set. Add it to server/.env (see .env.example).'
+  );
+  process.exit(1);
+}
 
 // Starter contents of main.py in a newly created room
 const defaultCode = `def main():
@@ -68,8 +87,8 @@ const MAX_CODE_BYTES = 256 * 1024;
 // Stops a room from being flooded with an unbounded number of files
 const MAX_FILES_PER_ROOM = 200;
 const MAX_HISTORY = 1000;
-// TODO: enable once teams are working (room access is currently not restricted to team members)
-const TEAM_ACCESS_ENFORCED = false;
+// How often (ms) an open socket re-checks that its session is still valid
+const WS_AUTH_RECHECK_MS = 60 * 1000;
 // Room IDs may only contain letters, digits, underscores and hyphens (1-64 chars)
 const ROOM_ID_PATTERN = /^[\w-]{1,64}$/;
 
@@ -86,7 +105,8 @@ function isValidFilePath(filePath) {
   );
 }
 
-app.use(express.json());
+// Leaves headroom over MAX_CODE_BYTES for submissions with several files
+app.use(express.json({ limit: '1mb' }));
 
 // --- Express HTTP REST routes ---
 app.get('/api/health', (req, res) => {
@@ -95,8 +115,6 @@ app.get('/api/health', (req, res) => {
 
 // Authentication routes from the shared backend.
 app.use('/api/auth', authRoutes);
-app.use('/api/groups', groupRoutes);
-app.use('/api/uploads/icons', express.static(ICON_DIR));
 
 // Return teams the authenticated user is allowed to collaborate with.
 app.get('/api/my-teams', requireAuth, async (req, res) => {
@@ -112,6 +130,7 @@ app.get('/api/my-teams', requireAuth, async (req, res) => {
         id: true,
         name: true,
         groupId: true,
+        group: { select: { name: true } },
       },
       orderBy: { id: 'asc' },
     });
@@ -124,9 +143,12 @@ app.get('/api/my-teams', requireAuth, async (req, res) => {
     });
   }
 });
-//app.use('/api/teams', teamRoutes);
+// Problems are mounted before groups so their requests don't pass through
+// the groups router (and its auth check) first.
 app.use('/api/groups/:groupId/problems', problemRoutes);
 app.use('/api/groups', groupRoutes);
+app.use('/api/teams', teamRoutes);
+app.use('/api/invites', invitesRoutes);
 app.use('/api/leaderboards', leaderboardRoutes);
 app.use('/api/uploads/icons', express.static(ICON_DIR));
 
@@ -231,9 +253,33 @@ app.post('/api/submit', requireAuth, async (req, res) => {
   }
 });
 
+// Unknown API routes get a JSON 404 rather than Express's HTML page
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'Not found.' });
+});
+
 // Shared error handler.
 // Keep this after the HTTP routes so route errors can reach it.
 app.use((err, req, res, _next) => {
+  // 4xx errors: body-parser failures (malformed JSON, body too large, which
+  // have a `type`) and errors thrown by routes with a status and message
+  if (err.status >= 400 && err.status < 500) {
+    return res.status(err.status).json({
+      error:
+        err.type === 'entity.too.large'
+          ? 'The request is too large.'
+          : err.type
+            ? 'The request is invalid.'
+            : err.message,
+    });
+  }
+  // Prisma: unique constraint hit by a concurrent request / record gone
+  if (err.code === 'P2002') {
+    return res.status(409).json({ error: 'That already exists.' });
+  }
+  if (err.code === 'P2025') {
+    return res.status(404).json({ error: 'Not found.' });
+  }
   console.error(err);
   res.status(500).json({ error: 'There has been an error with the server' });
 });
@@ -241,12 +287,37 @@ app.use((err, req, res, _next) => {
 // Create HTTP server from Express app (shared by REST and WebSocket)
 const server = http.createServer(app);
 
-// Initialize WebSocket server attached to HTTP server.
+// Two WebSocket servers share the one HTTP server:
+//  - wss:       collaborative editing at /ws
+//  - notifyWss: per-user push notifications at /ws/notifications
+// The `ws` library's `path` option can only match a single exact path, so both
+// are created with `noServer: true` and we route the HTTP "upgrade" request
+// ourselves (below) by looking at its URL path.
 // maxPayload leaves headroom over the code limit for the JSON envelope.
 const wss = new WebSocketServer({
-  server,
-  path: '/ws',
+  noServer: true,
   maxPayload: MAX_CODE_BYTES + 4096,
+});
+// Notification clients never need to send anything big
+const notifyWss = new WebSocketServer({ noServer: true, maxPayload: 1024 });
+
+server.on('upgrade', (req, socket, head) => {
+  const { pathname } = new URL(req.url, 'http://localhost');
+  const target =
+    pathname === '/ws'
+      ? wss
+      : pathname === '/ws/notifications'
+        ? notifyWss
+        : null;
+
+  if (!target) {
+    // Not one of our endpoints: refuse the upgrade and drop the connection
+    socket.destroy();
+    return;
+  }
+  target.handleUpgrade(req, socket, head, (ws) => {
+    target.emit('connection', ws, req);
+  });
 });
 
 // Creates the server-side record for a file
@@ -254,24 +325,113 @@ function newFile(code) {
   return { code, revision: 0, history: [], historyStart: 0 };
 }
 
-// Returns the room with this ID, creating it with a default main.py if needed
+// The room a team starts with when nothing has been saved yet
+function defaultRoomState() {
+  return {
+    tree: {
+      id: 'root',
+      name: 'Code',
+      type: 'directory',
+      children: [createFileNode('main.py')],
+    },
+    files: new Map([['main.py', newFile(defaultCode)]]),
+  };
+}
 
-function getRoom(roomId) {
-  let room = rooms.get(roomId);
-  if (!room) {
-    room = {
-      clients: new Set(),
-      tree: {
-        id: 'root',
-        name: 'Code',
-        type: 'directory',
-        children: [createFileNode('main.py')],
-      },
-      files: new Map([['main.py', newFile(defaultCode)]]),
-    };
-    rooms.set(roomId, room);
+// Builds a room's { tree, files } from what the database has saved, or the
+// default starter room if nothing is saved.
+async function loadRoomState(teamId) {
+  const saved = await loadRoom(teamId);
+  if (!saved) return defaultRoomState();
+
+  const files = new Map(
+    Object.entries(saved.files).map(([filePath, code]) => [
+      filePath,
+      newFile(code),
+    ])
+  );
+  // Safety net: every file node in the tree must have contents, otherwise
+  // opening it would fail. Give any that are missing an empty file.
+  for (const filePath of getFilePathsById(saved.fileTree).values()) {
+    if (!files.has(filePath)) files.set(filePath, newFile(''));
   }
-  return room;
+  return { tree: saved.fileTree, files };
+}
+
+// Rooms currently being loaded from the database: roomId -> Promise<room>.
+// Two people connecting at the same instant would otherwise each start a load
+// and end up with two separate copies of the same room.
+const roomsLoading = new Map();
+
+// Returns the room with this ID, loading it from the database (or creating the
+// default one) the first time it is needed. Async because of the database read.
+async function getRoom(roomId, teamId) {
+  const existing = rooms.get(roomId);
+  if (existing) return existing;
+
+  let loading = roomsLoading.get(roomId);
+  if (!loading) {
+    loading = loadRoomState(teamId)
+      .then((state) => {
+        const room = {
+          clients: new Set(),
+          teamId,
+          saveTimer: null, // pending debounced save, if any
+          dirty: false, // true when there are changes not yet in the database
+          saving: Promise.resolve(), // tail of the chain of save operations
+          ...state,
+        };
+        rooms.set(roomId, room);
+        return room;
+      })
+      .finally(() => roomsLoading.delete(roomId));
+    roomsLoading.set(roomId, loading);
+  }
+  return loading;
+}
+
+// How long to wait after the latest edit before writing to the database.
+// Typing produces many edits per second; batching them into one write keeps
+// the database from being hit on every keystroke.
+const SAVE_DEBOUNCE_MS = 1500;
+
+// Writes the room to the database now. Saves for one room are chained so two
+// writes can never run at the same time and land out of order.
+function saveRoomNow(room) {
+  clearTimeout(room.saveTimer);
+  room.saveTimer = null;
+  if (!room.dirty) return room.saving;
+  room.dirty = false;
+
+  // Snapshot the state synchronously, before any later edit can change it
+  const tree = room.tree;
+  const files = Object.fromEntries(
+    [...room.files].map(([filePath, file]) => [filePath, file.code])
+  );
+
+  room.saving = room.saving.then(() =>
+    saveRoom(room.teamId, tree, files).catch((error) => {
+      // P2025 / P2003: the team was deleted (e.g. its last member left), so
+      // there is nothing to save to any more
+      if (error.code === 'P2025' || error.code === 'P2003') return;
+      console.error(`Failed to save room for team ${room.teamId}:`, error);
+      room.dirty = true; // try again with the next save
+    })
+  );
+  return room.saving;
+}
+
+// Marks the room as changed and (re)starts the debounce timer. Called after
+// every edit; only the last call in a burst actually triggers a save.
+function scheduleSave(room) {
+  room.dirty = true;
+  clearTimeout(room.saveTimer);
+  room.saveTimer = setTimeout(() => saveRoomNow(room), SAVE_DEBOUNCE_MS);
+}
+
+// Saves every room with unsaved changes and waits for the writes to finish
+function flushAllRooms() {
+  return Promise.all([...rooms.values()].map((room) => saveRoomNow(room)));
 }
 
 // Sends a JSON message to one client, skipping sockets that are no longer open
@@ -321,7 +481,21 @@ function broadcastToRoom(room, sender, message) {
 wss.on('connection', async (ws, req) => {
   const { searchParams } = new URL(req.url, 'http://localhost');
   const token = searchParams.get('token');
-  const roomId = searchParams.get('roomId') || 'default-room';
+  const roomId = searchParams.get('roomId') || '';
+  let room = null;
+
+  // Attached first so a socket that errors or closes while authentication is
+  // still running neither crashes the process nor stays in a room
+  ws.on('error', (error) => {
+    console.error(`WebSocket error in room ${roomId}:`, error.message);
+  });
+  ws.on('close', () => {
+    if (!room) return;
+    room.clients.delete(ws);
+    console.log(`${ws.user.username} disconnected from room ${roomId}`);
+    // Don't make the last person to leave wait out the debounce timer
+    if (room.clients.size === 0) saveRoomNow(room);
+  });
 
   // Reject malformed room IDs before touching any room state
   if (!ROOM_ID_PATTERN.test(roomId)) {
@@ -335,7 +509,6 @@ wss.on('connection', async (ws, req) => {
   // The listener is attached immediately (before authentication finishes) so
   // a message the client sends as soon as the socket opens - e.g. SYNC_INIT -
   // isn't dropped; queued messages wait until `room` has been set up.
-  let room = null;
   let setupDone;
   let messageQueue = new Promise((resolve) => {
     setupDone = resolve;
@@ -353,11 +526,14 @@ wss.on('connection', async (ws, req) => {
         }
 
         try {
-          // Re-validate the session on every message so expired or revoked
-          // sessions are cut off immediately
-          if (!(await authenticate(token))) {
-            ws.close(4001, 'Unauthorized');
-            return;
+          // Re-validate the session periodically so expired or revoked
+          // sessions are cut off without a database hit on every keystroke
+          if (Date.now() - ws.authCheckedAt > WS_AUTH_RECHECK_MS) {
+            if (!(await authenticate(token))) {
+              ws.close(4001, 'Unauthorized');
+              return;
+            }
+            ws.authCheckedAt = Date.now();
           }
 
           if (!data || typeof data.type !== 'string') {
@@ -396,13 +572,22 @@ wss.on('connection', async (ws, req) => {
                 !isValidOp(op) ||
                 !Number.isInteger(baseRevision)
               ) {
-                send(ws, { type: 'ERROR', error: 'Invalid text edit.' });
+                // filePath lets the client drop the rejected edit and resync
+                send(ws, {
+                  type: 'ERROR',
+                  filePath,
+                  error: 'Invalid text edit.',
+                });
                 return;
               }
 
               const file = room.files.get(filePath);
               if (!file) {
-                send(ws, { type: 'ERROR', error: 'That file does not exist.' });
+                send(ws, {
+                  type: 'ERROR',
+                  filePath,
+                  error: 'That file does not exist.',
+                });
                 return;
               }
 
@@ -452,6 +637,7 @@ wss.on('connection', async (ws, req) => {
 
               // Confirm to the sender (it has already applied the edit) and
               // relay the rebased operation to everyone else
+              scheduleSave(room); // persist the new contents shortly
               send(ws, { type: 'ACK', filePath, revision: file.revision });
               broadcastToRoom(room, ws, {
                 type: 'TEXT_EDIT',
@@ -502,6 +688,7 @@ wss.on('connection', async (ws, req) => {
               }
 
               room.tree = result.tree;
+              scheduleSave(room); // persist the new structure shortly
               broadcastToRoom(room, null, {
                 type: 'TREE_UPDATE',
                 tree: room.tree,
@@ -554,8 +741,10 @@ wss.on('connection', async (ws, req) => {
                     requestId: data.requestId,
                     error:
                       error.code === 'ENOENT'
-                        ? 'Python was not found. Install Python or set PYTHON_EXECUTABLE.'
-                        : 'Python execution could not be started.',
+                        ? 'Docker was not found on the server.'
+                        : error.message === 'Python execution is disabled.'
+                          ? error.message
+                          : 'Python execution could not be started.',
                   });
                 })
                 .finally(() => {
@@ -630,29 +819,34 @@ wss.on('connection', async (ws, req) => {
       select: { id: true },
     });
 
-    // broken without teams: set TEAM_ACCESS_ENFORCED to true once teams work
-    //FIXME:
-    if (TEAM_ACCESS_ENFORCED == true && !team) {
+    if (!team) {
       ws.close(1008, 'Team access denied');
+      setupDone();
+      return;
+    }
+
+    // The client may have disconnected while we were checking access
+    if (ws.readyState !== WebSocket.OPEN) {
       setupDone();
       return;
     }
 
     ws.user = auth.user;
     ws.roomId = roomId;
-    room = getRoom(roomId);
+    ws.authCheckedAt = Date.now();
+    // Loads the team's saved files from the database on first use
+    const loadedRoom = await getRoom(roomId, teamId);
+    // The client may have disconnected during the database read; its close
+    // handler already ran (with no room), so don't add a dead socket now
+    if (ws.readyState !== WebSocket.OPEN) {
+      setupDone();
+      return;
+    }
+    room = loadedRoom;
     room.clients.add(ws);
     console.log(`${ws.user.username} connected to room ${roomId}`);
     setupDone(); // start processing any queued messages
 
-    // Remove the client from the room when it disconnects
-    ws.on('close', () => {
-      room.clients.delete(ws);
-      console.log(`${ws.user.username} disconnected from room ${roomId}`);
-    });
-    ws.on('error', (error) => {
-      console.error(`WebSocket error for ${ws.user.username}:`, error);
-    });
     // Tell the client the connection was accepted
     send(ws, { type: 'WELCOME', message: 'Connected to the editor room.' });
   } catch (error) {
@@ -662,8 +856,70 @@ wss.on('connection', async (ws, req) => {
   }
 });
 
+// Per-user notification sockets: clients connect to
+// /ws/notifications?token=<session token>. The server only ever pushes to
+// these (see lib/notifier.js); anything a client sends is ignored.
+notifyWss.on('connection', async (ws, req) => {
+  const { searchParams } = new URL(req.url, 'http://localhost');
+  let userId = null;
+
+  // Attached before the (async) authentication so a socket that closes or
+  // errors mid-way is cleaned up properly and never crashes the process
+  ws.on('error', (error) => {
+    console.error('Notification socket error:', error.message);
+  });
+  ws.on('close', () => {
+    if (userId !== null) unregister(userId, ws);
+  });
+
+  try {
+    const auth = await authenticate(searchParams.get('token'));
+    if (!auth) {
+      // 4001 tells the client its sign-in is invalid/expired
+      ws.close(4001, 'Unauthorized');
+      return;
+    }
+    if (ws.readyState !== WebSocket.OPEN) return; // closed while authenticating
+
+    userId = auth.user.id;
+    register(userId, ws);
+  } catch (error) {
+    console.error('Notification socket setup failed:', error);
+    ws.close(1011, 'Connection setup failed');
+  }
+});
+
+// On Ctrl+C / `kill`, write any not-yet-saved editor changes before exiting,
+// otherwise edits from the last second or so would be lost.
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.once(signal, () => {
+    flushAllRooms()
+      .catch((error) => console.error('Failed to flush rooms:', error))
+      .finally(() => process.exit(0));
+  });
+}
+
 // Start the HTTP & WebSocket server
 server.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
   console.log(`WebSocket server running on ws://localhost:${port}/ws`);
+
+  // Sandbox containers from a previous run that was stopped mid-execution
+  if (
+    process.env.ENABLE_PYTHON_EXECUTION === 'true' ||
+    process.env.ENABLE_SUBMISSION_GRADING === 'true'
+  ) {
+    failInterruptedSubmissions()
+      .then((failed) => {
+        if (failed)
+          console.log(`Marked ${failed} interrupted submissions as failed.`);
+      })
+      .catch((error) => {
+        console.error('Could not clean up interrupted submissions:', error);
+      });
+    removeOrphanedContainers().then((removed) => {
+      if (removed)
+        console.log(`Removed ${removed} leftover sandbox containers.`);
+    });
+  }
 });

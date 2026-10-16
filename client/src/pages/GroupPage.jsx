@@ -4,6 +4,7 @@ import GroupIcon from '../components/GroupIcon.jsx';
 import Countdown from '../components/Countdown.jsx';
 import ProblemsPanel from '../components/ProblemsPanel.jsx';
 import GroupMembers from '../components/GroupMembers.jsx';
+import { useNotifications } from '../notifications/NotificationsContext.jsx';
 import './Groups.css';
 
 const STATUS_TEXT = {
@@ -43,6 +44,12 @@ export default function GroupPage({ groupId, onBack }) {
       .catch((err) => setLoadError(err.message));
   }, [groupId]);
 
+  // Settings, icon and start responses don't include the member list, so
+  // merge them into the loaded group instead of replacing it
+  const mergeGroup = useCallback((updated) => {
+    setGroup((current) => ({ ...current, ...updated }));
+  }, []);
+
   return (
     <section className="groups page-enter">
       <button className="link-button" onClick={onBack}>
@@ -80,25 +87,21 @@ export default function GroupPage({ groupId, onBack }) {
           </header>
 
           {group.isAdmin && group.status === 'not-started' && (
-            <StartEvent group={group} onStarted={setGroup} />
+            <StartEvent group={group} onStarted={mergeGroup} />
           )}
 
-          <MembersList group={group} />
+          <GroupMembers group={group} />
 
           <TeamsPanel group={group} />
 
-          {group.isAdmin && <InviteUser group={group} />}
-
           {group.isAdmin ? (
             <>
-              <IconUpload group={group} onSaved={setGroup} />
-              <SettingsForm group={group} onSaved={setGroup} />
+              <IconUpload group={group} onSaved={mergeGroup} />
+              <SettingsForm group={group} onSaved={mergeGroup} />
             </>
           ) : (
             <SettingsSummary group={group} />
           )}
-
-          <GroupMembers group={group} />
 
           <ProblemsPanel group={group} />
         </>
@@ -156,47 +159,6 @@ function StartEvent({ group, onStarted }) {
   );
 }
 
-function MembersList({ group }) {
-  const members = group.members || [];
-
-  return (
-    <div className="panel">
-      <div className="members-heading">
-        <div>
-          <h2>Members</h2>
-          <p className="form-hint">
-            {members.length} {members.length === 1 ? 'member' : 'members'} in
-            this group.
-          </p>
-        </div>
-
-        <span className="member-count">{members.length}</span>
-      </div>
-
-      {members.length > 0 ? (
-        <ul className="member-list">
-          {members.map((member) => (
-            <li key={member.id} className="member-row">
-              <div className="member-avatar">
-                {member.username?.charAt(0).toUpperCase()}
-              </div>
-
-              <div className="member-info">
-                <span className="member-name">{member.username}</span>
-                <span className="member-meta">User #{member.id}</span>
-              </div>
-
-              {member.isAdmin && <span className="member-badge">Admin</span>}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="form-hint">No members yet.</p>
-      )}
-    </div>
-  );
-}
-
 function TeamsPanel({ group }) {
   const [teamData, setTeamData] = useState(null);
   const [error, setError] = useState('');
@@ -211,11 +173,15 @@ function TeamsPanel({ group }) {
     }
   }, [group.id]);
 
+  // Reload the teams (and the user's pending team invites) whenever the server
+  // pushes an invite change, so new team invites appear without a refresh
+  const { tick } = useNotifications();
+
   useEffect(() => {
     loadTeams();
-  }, [loadTeams]);
+  }, [loadTeams, tick]);
 
-  const locked = Boolean(group.startedAt);
+  const locked = group.status !== 'not-started';
 
   return (
     <div className="panel teams-panel">
@@ -620,99 +586,6 @@ function TeamCard({ team, group, locked, maxTeamSize, onChanged }) {
   );
 }
 
-function InviteUser({ group }) {
-  const [userId, setUserId] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const locked = Boolean(group.startedAt);
-
-  async function handleInvite(e) {
-    e.preventDefault();
-
-    setError('');
-    setSuccess('');
-
-    const id = Number(userId);
-
-    if (!Number.isInteger(id) || id < 1) {
-      setError('Enter a valid user ID.');
-      return;
-    }
-
-    setBusy(true);
-
-    try {
-      await api(`/groups/${group.id}/invites`, {
-        method: 'POST',
-        body: {
-          userId: id,
-        },
-      });
-
-      setSuccess('Invitation sent.');
-      setUserId('');
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <form className="panel invite-panel" onSubmit={handleInvite}>
-      <div>
-        <h2>Invite a member</h2>
-        <p className="form-hint">Invite another user to join this group.</p>
-      </div>
-
-      {locked ? (
-        <p className="form-hint">
-          Invitations are closed because the event has started.
-        </p>
-      ) : (
-        <>
-          <div className="invite-row">
-            <label>
-              User ID
-              <input
-                type="number"
-                min="1"
-                step="1"
-                value={userId}
-                onChange={(e) => {
-                  setUserId(e.target.value);
-                  setError('');
-                  setSuccess('');
-                }}
-                placeholder="Enter user ID"
-                required
-              />
-            </label>
-
-            <button className="btn-primary" type="submit" disabled={busy}>
-              {busy ? 'Sending…' : 'Send invite'}
-            </button>
-          </div>
-
-          {error && (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
-          )}
-
-          {success && (
-            <p className="form-saved" role="status">
-              {success}
-            </p>
-          )}
-        </>
-      )}
-    </form>
-  );
-}
-
 function IconUpload({ group, onSaved }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -772,7 +645,7 @@ function IconUpload({ group, onSaved }) {
 }
 
 function SettingsForm({ group, onSaved }) {
-  const locked = Boolean(group.startedAt);
+  const locked = group.status !== 'not-started';
 
   const [values, setValues] = useState({
     durationMin: String(group.durationMin),

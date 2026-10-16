@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import FileTreeNode from './FileTreeNode.jsx';
 import {
   applyTreeOperation,
@@ -227,4 +227,5 @@ function FileTree({
   );
 }
 
-export default FileTree;
+// Memoised so typing in the editor doesn't re-render the whole tree
+export default memo(FileTree);

@@ -15,6 +15,7 @@ import {
   requireNotStarted,
 } from '../middleware/groups.js';
 import { getEndsAt, getEventStatus } from '../lib/eventTime.js';
+import { notifyInvitesChanged } from '../lib/notifier.js';
 
 // Icons are saved in server/uploads/icons and served at /api/uploads/icons.
 export const ICON_DIR = fileURLToPath(
@@ -175,45 +176,8 @@ router.get(
   })
 );
 
-// GET /api/groups/invites/pending
-// Returns pending invitations for the current user.
-router.get(
-  '/invites/pending',
-  wrap(async (req, res) => {
-    const invites = await prisma.groupInvite.findMany({
-      where: {
-        userId: req.user.id,
-      },
-
-      include: {
-        group: true,
-      },
-
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
-
-    return res.json({
-      invites: invites.map((invite) => ({
-        id: invite.id,
-        createdAt: invite.createdAt,
-
-        group: {
-          id: invite.group.id,
-          name: invite.group.name,
-          iconUrl: invite.group.iconFile
-            ? `/api/uploads/icons/${invite.group.iconFile}`
-            : null,
-          startedAt: invite.group.startedAt,
-        },
-      })),
-    });
-  })
-);
-
 // GET /api/groups/invites/mine
-// Kept for compatibility with the dev branch UI.
+// Returns pending group invitations for the current user.
 router.get(
   '/invites/mine',
   wrap(async (req, res) => {
@@ -548,6 +512,10 @@ router.post(
       },
     });
 
+    // Push to the invitee (so their navbar badge and invite list update at
+    // once) and to the admin (so their other tabs show the new pending invite)
+    notifyInvitesChanged(userId, req.group.adminId);
+
     return res.status(201).json({
       invite: {
         id: invite.id,
@@ -572,6 +540,15 @@ router.delete(
       });
     }
 
+    // Look the invite up first: once deleted we couldn't tell whose it was,
+    // and we need to tell that user their invite has disappeared
+    const invite = await prisma.groupInvite.findFirst({
+      where: {
+        id: inviteId,
+        groupId: req.group.id,
+      },
+    });
+
     const { count } = await prisma.groupInvite.deleteMany({
       where: {
         id: inviteId,
@@ -579,11 +556,13 @@ router.delete(
       },
     });
 
-    if (count === 0) {
+    if (!invite || count === 0) {
       return res.status(404).json({
         error: 'Invite not found.',
       });
     }
+
+    notifyInvitesChanged(invite.userId, req.group.adminId);
 
     return res.json({
       ok: true,
@@ -724,6 +703,19 @@ router.post(
       return newMember;
     });
 
+    // Tell the accepter's other tabs (the invite is gone, so the badge must
+    // drop), the admin (new member, one fewer pending invite) and the other
+    // members (their member list changed)
+    const otherMembers = await prisma.groupMember.findMany({
+      where: { groupId: invite.groupId },
+      select: { userId: true },
+    });
+    notifyInvitesChanged(
+      req.user.id,
+      invite.group.adminId,
+      ...otherMembers.map((member) => member.userId)
+    );
+
     return res.status(200).json(membership);
   })
 );
@@ -744,6 +736,10 @@ router.post(
       where: {
         id: inviteId,
       },
+      // The group is needed to find out who the admin is
+      include: {
+        group: true,
+      },
     });
 
     if (!invite) {
@@ -763,6 +759,9 @@ router.post(
         id: inviteId,
       },
     });
+
+    // The decliner's other tabs and the admin (pending list shrank)
+    notifyInvitesChanged(req.user.id, invite.group.adminId);
 
     return res.json({
       message: 'Invitation declined.',

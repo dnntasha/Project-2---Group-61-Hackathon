@@ -3,8 +3,16 @@ import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 import { hasStarted } from '../middleware/groups.js';
+import { notifyInvitesChanged } from '../lib/notifier.js';
 
 const router = Router();
+
+const MAX_TEAM_NAME_LENGTH = 40;
+
+// An error the shared error handler turns into this status and message
+function httpError(status, message) {
+  return Object.assign(new Error(message), { status });
+}
 
 // Get all teams for a group, plus the signed-in user's pending team invites.
 router.get('/group/:groupId', requireAuth, async (req, res, next) => {
@@ -165,6 +173,12 @@ router.post('/', requireAuth, async (req, res, next) => {
       });
     }
 
+    if (name.trim().length > MAX_TEAM_NAME_LENGTH) {
+      return res.status(400).json({
+        error: `Team names can be at most ${MAX_TEAM_NAME_LENGTH} characters.`,
+      });
+    }
+
     const trimmedName = name.trim();
 
     const group = await prisma.group.findUnique({
@@ -203,50 +217,53 @@ router.post('/', requireAuth, async (req, res, next) => {
       });
     }
 
-    const currentTeam = await prisma.teamMember.findFirst({
-      where: {
-        userId: req.user.id,
-        team: {
-          groupId,
-        },
-      },
-    });
-
-    if (currentTeam) {
-      return res.status(409).json({
-        error: 'You are already part of a team in this group.',
-      });
-    }
-
-    const existingTeam = await prisma.team.findUnique({
-      where: {
-        groupId_name: {
-          groupId,
-          name: trimmedName,
-        },
-      },
-    });
-
-    if (existingTeam) {
-      return res.status(409).json({
-        error: 'A team with this name already exists in the group.',
-      });
-    }
-
-    const team = await prisma.team.create({
-      data: {
-        name: trimmedName,
-        groupId,
-        leaderId: req.user.id,
-        members: {
-          create: {
-            userId: req.user.id,
+    // Checked and created in one transaction so two quick requests can't put
+    // the same user in two teams of this group
+    const team = await prisma.$transaction(async (tx) => {
+      const currentTeam = await tx.teamMember.findFirst({
+        where: {
+          userId: req.user.id,
+          team: {
+            groupId,
           },
         },
-      },
-      include: {
-        members: true,
-      },
+      });
+
+      if (currentTeam) {
+        throw httpError(409, 'You are already part of a team in this group.');
+      }
+
+      const existingTeam = await tx.team.findUnique({
+        where: {
+          groupId_name: {
+            groupId,
+            name: trimmedName,
+          },
+        },
+      });
+
+      if (existingTeam) {
+        throw httpError(
+          409,
+          'A team with this name already exists in the group.'
+        );
+      }
+
+      return tx.team.create({
+        data: {
+          name: trimmedName,
+          groupId,
+          leaderId: req.user.id,
+          members: {
+            create: {
+              userId: req.user.id,
+            },
+          },
+        },
+        include: {
+          members: true,
+        },
+      });
     });
 
     return res.status(201).json(team);
@@ -389,6 +406,9 @@ router.post('/:teamId/invites', requireAuth, async (req, res, next) => {
       },
     });
 
+    // Push to the invitee (badge + invite list) and the leader (other tabs)
+    notifyInvitesChanged(userId, team.leaderId);
+
     return res.status(201).json(invite);
   } catch (err) {
     next(err);
@@ -441,28 +461,30 @@ router.post(
         });
       }
 
-      const existingMembership = await prisma.teamMember.findFirst({
-        where: {
-          userId: req.user.id,
-          team: {
-            groupId: invite.team.groupId,
-          },
-        },
-      });
-
-      if (existingMembership) {
-        return res.status(409).json({
-          error: 'You are already part of a team in this group.',
-        });
-      }
-
-      if (invite.team.members.length >= invite.team.group.maxTeamSize) {
-        return res.status(400).json({
-          error: 'The team is already full.',
-        });
-      }
-
+      // The membership and team-size checks run inside the transaction so
+      // concurrent accepts can't overfill a team or double-book a user
       const membership = await prisma.$transaction(async (tx) => {
+        const existingMembership = await tx.teamMember.findFirst({
+          where: {
+            userId: req.user.id,
+            team: {
+              groupId: invite.team.groupId,
+            },
+          },
+        });
+
+        if (existingMembership) {
+          throw httpError(409, 'You are already part of a team in this group.');
+        }
+
+        const memberCount = await tx.teamMember.count({
+          where: { teamId: invite.teamId },
+        });
+
+        if (memberCount >= invite.team.group.maxTeamSize) {
+          throw httpError(400, 'The team is already full.');
+        }
+
         const newMember = await tx.teamMember.create({
           data: {
             teamId: invite.teamId,
@@ -478,6 +500,14 @@ router.post(
 
         return newMember;
       });
+
+      // The accepter's other tabs, the leader, and everyone already on the
+      // team (`invite.team.members` was loaded before the new member joined)
+      notifyInvitesChanged(
+        req.user.id,
+        invite.team.leaderId,
+        ...invite.team.members.map((member) => member.userId)
+      );
 
       return res.status(200).json(membership);
     } catch (err) {
@@ -504,6 +534,10 @@ router.post(
         where: {
           id: inviteId,
         },
+        // Needed to find out who leads the team
+        include: {
+          team: true,
+        },
       });
 
       if (!invite) {
@@ -523,6 +557,9 @@ router.post(
           id: inviteId,
         },
       });
+
+      // The decliner's other tabs and the leader (the pending list shrank)
+      notifyInvitesChanged(req.user.id, invite.team.leaderId);
 
       return res.json({
         message: 'Invitation declined.',
