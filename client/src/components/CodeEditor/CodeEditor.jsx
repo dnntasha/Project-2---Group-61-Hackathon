@@ -17,6 +17,7 @@ import {
   transform,
   transformIndex,
 } from '../../../../server/lib/textOp.js';
+import { INDENT, nextLineIndentation, shiftLines } from './indentation.js';
 import './CodeEditor.css';
 
 // The file that is open when the editor first loads
@@ -590,8 +591,9 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   }, [activeRoomId, handleIncomingMessage, problemId, wsUrl]);
 
   // Applies a local change immediately, then syncs it to the server.
-  // `cursorPosition` restores the caret after React re-renders the textarea.
-  const applyLocalEdit = (updatedCode, cursorPosition) => {
+  // `cursor` (a caret position, or a { start, end } selection) is restored
+  // after React re-renders the textarea.
+  const applyLocalEdit = (updatedCode, cursor) => {
     const filePath = activePathRef.current;
     const file = filesRef.current.get(filePath);
     if (!file) return;
@@ -605,11 +607,9 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
     flushFile(filePath);
 
     // Restored by the layout effect once React has written the new text
-    if (cursorPosition !== undefined) {
-      pendingSelectionRef.current = {
-        start: cursorPosition,
-        end: cursorPosition,
-      };
+    if (cursor !== undefined) {
+      pendingSelectionRef.current =
+        typeof cursor === 'number' ? { start: cursor, end: cursor } : cursor;
     }
   };
 
@@ -645,15 +645,26 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
 
     const { selectionStart, selectionEnd, value } = textarea;
 
-    // Tab -> insert four spaces instead of moving focus
+    // Tab -> indent instead of moving focus. With a selection (or Shift+Tab)
+    // whole lines are indented/outdented, so selected text is never replaced.
     if (event.key === 'Tab') {
       event.preventDefault();
-      const indentation = '    ';
+      if (event.shiftKey || selectionStart !== selectionEnd) {
+        const shifted = shiftLines(
+          value,
+          selectionStart,
+          selectionEnd,
+          event.shiftKey
+        );
+        applyLocalEdit(shifted.value, {
+          start: shifted.selectionStart,
+          end: shifted.selectionEnd,
+        });
+        return;
+      }
       const next =
-        value.slice(0, selectionStart) +
-        indentation +
-        value.slice(selectionEnd);
-      applyLocalEdit(next, selectionStart + indentation.length);
+        value.slice(0, selectionStart) + INDENT + value.slice(selectionEnd);
+      applyLocalEdit(next, selectionStart + INDENT.length);
       return;
     }
 
@@ -678,7 +689,7 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
     }
 
     // Enter -> auto-indent: copy the current line's indentation, add a level
-    // after a line ending in ':', and dedent for else/elif/except/finally/case
+    // after a line ending in ':', and remove one after return/pass/break/...
     if (
       event.key !== 'Enter' ||
       event.ctrlKey ||
@@ -692,15 +703,7 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
 
     const lineStart = value.lastIndexOf('\n', selectionStart - 1) + 1;
     const lineBeforeCursor = value.slice(lineStart, selectionStart);
-    const indentation = lineBeforeCursor.match(/^[\t ]*/)?.[0] || '';
-    const trimmedLine = lineBeforeCursor.trimStart();
-    const dedent = /^(?:else|elif|except|finally|case)\b/.test(trimmedLine);
-    const currentIndent = dedent
-      ? indentation.slice(0, Math.max(0, indentation.length - 4))
-      : indentation;
-    const opensBlock = /:\s*(?:#.*)?$/.test(lineBeforeCursor);
-    const nextIndent = currentIndent + (opensBlock && !dedent ? '    ' : '');
-    const inserted = `\n${nextIndent}`;
+    const inserted = `\n${nextLineIndentation(lineBeforeCursor)}`;
     const next =
       value.slice(0, selectionStart) + inserted + value.slice(selectionEnd);
     applyLocalEdit(next, selectionStart + inserted.length);
