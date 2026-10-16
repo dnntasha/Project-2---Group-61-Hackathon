@@ -16,6 +16,7 @@ import {
 } from '../middleware/groups.js';
 import { getEndsAt, getEventStatus } from '../lib/eventTime.js';
 import { notifyInvitesChanged } from '../lib/notifier.js';
+import { hasImageSignature } from '../lib/imageSignature.js';
 
 // Icons are saved in server/uploads/icons and served at /api/uploads/icons.
 export const ICON_DIR = fileURLToPath(
@@ -405,6 +406,15 @@ router.post(
       }
 
       try {
+        // The browser-supplied Content-Type can be anything, so check the
+        // file's own signature before keeping it
+        if (!(await hasImageSignature(req.file.path, req.file.mimetype))) {
+          await unlink(req.file.path).catch(() => {});
+          return res.status(400).json({
+            error: 'That file is not a valid PNG, JPEG, GIF or WebP image.',
+          });
+        }
+
         const oldFile = req.group.iconFile;
 
         const group = await prisma.group.update({
@@ -425,6 +435,8 @@ router.post(
           group: toClient(group, true),
         });
       } catch (dbErr) {
+        // Don't leave the uploaded file behind if it wasn't recorded
+        await unlink(req.file.path).catch(() => {});
         next(dbErr);
       }
     });
