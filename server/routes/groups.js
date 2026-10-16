@@ -15,7 +15,7 @@ import {
   requireNotStarted,
 } from '../middleware/groups.js';
 import { getEndsAt, getEventStatus } from '../lib/eventTime.js';
-import { notifyInvitesChanged } from '../lib/notifier.js';
+import { notifyGroup, notifyInvitesChanged } from '../lib/notifier.js';
 import { createStarterCodebases } from '../lib/codebases.js';
 import { hasImageSignature } from '../lib/imageSignature.js';
 
@@ -671,6 +671,8 @@ router.post(
         id: req.group.id,
       },
     });
+
+    notifyGroup(group.id, { type: 'GROUP_CHANGED' });
 
     return res.json({
       group: toClient(group, true),

@@ -57,8 +57,9 @@ import { failInterruptedSubmissions } from './submission/submissionResults.js';
 import { runPython } from './lib/pythonRunner.js';
 import { applyOp, isValidOp, transform } from './lib/textOp.js';
 import { loadRoom, saveRoom } from './lib/roomStore.js';
-import { register, unregister } from './lib/notifier.js';
+import { notifyGroup, register, unregister } from './lib/notifier.js';
 import invitesRoutes from './routes/invites.js';
+import submissionRoutes from './routes/submissions.js';
 import { MAIN_STUB, starterTree } from './lib/codebases.js';
 
 // The file-tree rules live next to the client's tree UI so both sides share them.
@@ -202,6 +203,7 @@ app.get('/api/my-teams', requireAuth, async (req, res) => {
 // the groups router (and its auth check) first.
 app.use('/api/groups/:groupId/problems', problemRoutes);
 app.use('/api/groups', groupRoutes);
+app.use('/api/teams/:teamId/submissions', submissionRoutes);
 app.use('/api/teams', teamRoutes);
 app.use('/api/invites', invitesRoutes);
 app.use('/api/leaderboards', leaderboardRoutes);
@@ -304,13 +306,41 @@ app.post('/api/submit', requireAuth, submitLimiter, async (req, res) => {
     });
   }
 
+  const room = rooms.get(`team-${teamId}`);
   try {
     const result = await processSubmission({
       userId: req.user.id,
       teamId,
       problemId,
-      loadCodebase: () => getTeamCodebase(teamId, problemId),
+      loadCodebase: () => {
+        if (room) {
+          broadcastToRoom(room, null, {
+            type: 'SUBMISSION_STARTED',
+            problemId,
+            username: req.user.username,
+          });
+        }
+        return getTeamCodebase(teamId, problemId);
+      },
     });
+
+    // Attempted submissions go to the whole room; refusals only to the sender
+    if (room && result.submissionId) {
+      broadcastToRoom(room, null, {
+        type: 'SUBMISSION_RESULT',
+        problemId,
+        result,
+      });
+    }
+
+    // A graded submission can change the leaderboards
+    if (result.success) {
+      const team = await prisma.team.findUnique({
+        where: { id: teamId },
+        select: { groupId: true },
+      });
+      if (team) notifyGroup(team.groupId, { type: 'LEADERBOARD_CHANGED' });
+    }
 
     return res.status(result.status).json(result);
   } catch (error) {
