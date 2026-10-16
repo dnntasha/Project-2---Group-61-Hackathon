@@ -23,28 +23,24 @@
 
 .navbar-list {
   display: flex;
-  gap: 4px;
+  gap: 6px;
   margin: 0;
-  padding: 0;
+  padding: 8px 0;
   list-style: none;
   overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .navbar-link {
   display: block;
-  padding: 14px 16px;
+  padding: 8px 14px;
   color: var(--text);
   text-decoration: none;
-  font-weight: 500;
-  border-bottom: 2px solid transparent;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: normal;
+  border-radius: 8px;
   white-space: nowrap;
-  transition:
-    color 150ms ease,
-    border-color 150ms ease;
-}
-
-.navbar-link:hover {
-  color: var(--text-h);
 }
 
 .navbar-link:focus-visible {
@@ -52,9 +48,10 @@
   outline-offset: -2px;
 }
 
-.navbar-link--active {
+.navbar-link--active,
+.navbar-link--active:hover {
   color: var(--accent);
-  border-bottom-color: var(--accent);
+  background: var(--accent-bg);
 }
 
 /* Pending-invitation count shown next to the Groups link */

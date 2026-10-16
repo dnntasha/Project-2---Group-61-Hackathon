@@ -21,6 +21,9 @@ import './FileTree.css';
  * validated here for quick feedback, then sent as operations through
  * `onOperation`; the tree only changes when the server sends the result back.
  *
+ * `readOnly` hides the buttons that change the tree, so it can still be browsed
+ * (and files opened) while the room is locked.
+ *
  * Local mode (no props): the tree lives in this component's state and
  * operations are applied immediately with the same rules the server uses.
  *
@@ -33,6 +36,7 @@ function FileTree({
   onOperation,
   onSelectFile,
   selectedPath,
+  readOnly = false,
 }) {
   const isShared = Boolean(onOperation);
   const [localTree, setLocalTree] = useState(() => ({
@@ -117,14 +121,13 @@ function FileTree({
   }
 
   // Renames a node while excluding that node itself from duplicate-name checks.
-  function handleRename(nodeId, currentName) {
-    const newName = window.prompt('Enter new name:', currentName);
+  // The new name comes from the inline editor in FileTreeNode.
+  function handleRename(nodeId, currentName, newName) {
+    const trimmedName = newName.trim();
 
-    if (newName === null) {
+    if (trimmedName === currentName) {
       return;
     }
-
-    const trimmedName = newName.trim();
 
     if (!isValidNodeName(trimmedName)) {
       window.alert('Please enter a valid name.');
@@ -220,6 +223,7 @@ function FileTree({
           onMove={handleMove}
           onSelectFile={onSelectFile} //adds functionality of selecting files
           selectedPath={selectedPath} // highlights the open file
+          readOnly={readOnly}
           path=""
         />
       )}

@@ -2,10 +2,13 @@
   --text: #6b6375;
   --text-h: #08060d;
   --bg: #fff;
+  --bg-page: #f4f2f8;
+  --bg-panel: #faf8fd;
   --border: #e5e4e7;
   --code-bg: #f4f3ec;
   --accent: #aa3bff;
   --accent-bg: rgba(170, 59, 255, 0.1);
+  --accent-hover: rgba(170, 59, 255, 0.07);
   --accent-border: rgba(170, 59, 255, 0.5);
   --shadow:
     rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
@@ -34,10 +37,13 @@
     --text: #9ca3af;
     --text-h: #f3f4f6;
     --bg: #16171d;
+    --bg-page: #0f1015;
+    --bg-panel: #1d1a27;
     --border: #2e303a;
     --code-bg: #1f2028;
     --accent: #c084fc;
     --accent-bg: rgba(192, 132, 252, 0.15);
+    --accent-hover: rgba(192, 132, 252, 0.1);
     --accent-border: rgba(192, 132, 252, 0.5);
     --shadow:
       rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
@@ -49,6 +55,7 @@ body {
 }
 
 #root {
+  background: var(--bg-page);
   width: 100%;
   max-width: 1440px;
   margin: 0 auto;
@@ -135,4 +142,65 @@ code {
     animation-duration: 1ms !important;
     transition-duration: 1ms !important;
   }
+}
+
+/* ---- Button hover effects ----
+   One rule everywhere: hovering highlights with the accent colour (a soft
+   tint and accent text/border), never darkens. Filled buttons gain an accent
+   ring instead, since they are already solid accent. */
+
+.btn-primary,
+.btn-secondary,
+.back-button,
+.auth-submit,
+.app-signout,
+.editor-btn,
+.group-tab,
+.group-card,
+.navbar-link,
+.link-button,
+.auth-switch button {
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.btn-primary:hover:not(:disabled),
+.auth-submit:hover:not(:disabled),
+.editor-btn-primary:hover:not(:disabled) {
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.btn-secondary:hover:not(:disabled),
+.app-signout:hover:not(:disabled),
+.editor-btn:not(.editor-btn-primary):hover:not(:disabled),
+.back-button:hover:not(:disabled),
+.group-tab:hover:not(:disabled),
+.navbar-link:hover,
+.group-card:hover {
+  color: var(--accent);
+  background: var(--accent-hover);
+  border-color: var(--accent);
+}
+
+.group-card:hover .group-card-name {
+  color: var(--accent);
+}
+
+.link-button:hover:not(:disabled),
+.auth-switch button:hover {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Selected items keep the stronger fill */
+.group-tab.group-tab-active,
+.group-tab.group-tab-active:hover:not(:disabled),
+.navbar-link.navbar-link--active,
+.navbar-link.navbar-link--active:hover {
+  color: var(--accent);
+  background: var(--accent-bg);
 }
