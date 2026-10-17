@@ -1,0 +1,125 @@
+.leaderboard-page {
+  min-height: calc(100vh - 72px);
+  padding: 36px 24px;
+}
+
+.leaderboard-container {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.leaderboard-header {
+  margin-bottom: 24px;
+}
+
+.leaderboard-header h1 {
+  margin: 0 0 8px;
+  font-size: 32px;
+  letter-spacing: -0.6px;
+  color: var(--text-h);
+}
+
+.leaderboard-header p {
+  margin: 0;
+  color: var(--text);
+}
+
+.leaderboard-panel {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 22px;
+  margin-bottom: 18px;
+}
+
+.leaderboard-group-select {
+  display: grid;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.leaderboard-group-select select {
+  width: 100%;
+  max-width: 420px;
+  font: inherit;
+  color: var(--text-h);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.leaderboard-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.leaderboard-title-row h2 {
+  margin: 0 0 4px;
+  color: var(--text-h);
+}
+
+.leaderboard-title-row p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.leaderboard-table-wrap {
+  overflow-x: auto;
+}
+
+.leaderboard-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.leaderboard-table th,
+.leaderboard-table td {
+  padding: 13px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.leaderboard-table th {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.leaderboard-table td {
+  color: var(--text-h);
+}
+
+.leaderboard-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.leaderboard-table td:first-child {
+  width: 100px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.leaderboard-table td:nth-child(2) {
+  font-weight: 600;
+}
+
+.leaderboard-muted {
+  color: var(--text);
+}
+
+.leaderboard-error {
+  color: #d92d20;
+}
+
+.leaderboard-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px;
+  align-items: end;
+}
