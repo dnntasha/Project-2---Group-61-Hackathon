@@ -20,8 +20,8 @@ const tree = {
 
 test('builds the grader tree from a live room (files are { code } records)', () => {
   const files = new Map([
-    ['main.py', { code: 'print(1)', revision: 4 }],
-    ['lib/util.py', { code: 'X = 2', revision: 0 }],
+    ['main.py', { code: 'print(1)' }],
+    ['lib/util.py', { code: 'X = 2' }],
   ]);
   const codebase = roomToCodebase(tree, files);
 

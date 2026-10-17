@@ -9,19 +9,22 @@
  * Collaboration model: each "room" holds an in-memory file tree and the
  * contents of its files. File/folder changes (create, rename, delete, move)
  * are applied to the room's tree by the server and the new tree is sent to
- * everyone in the room. Clients
- * send text operations (see lib/textOp.js) tagged with the file revision they
- * were based on. If other edits landed since that revision, the server
- * transforms the incoming operation over them (operational transformation),
- * applies it, bumps the revision, acknowledges the sender and relays the
- * transformed operation to everyone else in the room. This lets several users
- * type in the same file at once without losing anyone's changes. If an
- * operation can't be reconciled the sender gets a full snapshot to resync.
+ * everyone in the room.
+ *
+ * File text uses a deliberately simple LAST-WRITE-WINS model (this replaced an
+ * earlier operational-transformation design). A client sends the FULL new text
+ * of the file it edited. The server stores it as the file's contents, replacing
+ * whatever was there, acknowledges the sender and relays the same full text to
+ * everyone else in the room. The server handles messages one at a time, so
+ * "last" means the last edit the server processed. There is no merging: if two
+ * people edit the same file at the same moment, the later write replaces the
+ * earlier one entirely. There are no revision numbers, no operation history and
+ * no transforming of edits against each other.
+ *
  * Room state is saved to the database (see lib/roomStore.js): shortly after
  * every change, when the last client leaves, and on shutdown. A room is loaded
  * back from the database the first time someone connects after a restart.
- * Only file contents and the tree are saved; OT revision history is not, so
- * revisions restart from 0 (clients resync from a snapshot on connect).
+ * Only file contents and the tree are saved.
  *
  * A second WebSocket endpoint, /ws/notifications, carries per-user push events
  * (e.g. "your invites changed") - see lib/notifier.js.
@@ -55,7 +58,6 @@ import { EVENT_STATUS, getEndsAt, getEventStatus } from './lib/eventTime.js';
 import { processSubmission } from './submission/submissionService.js';
 import { failInterruptedSubmissions } from './submission/submissionResults.js';
 import { runVisibleTests } from './evaluation/codebaseEvaluator.js';
-import { applyOp, isValidOp, transform } from './lib/textOp.js';
 import { loadRoom, saveRoom } from './lib/roomStore.js';
 import { notifyGroup, register, unregister } from './lib/notifier.js';
 import invitesRoutes from './routes/invites.js';
@@ -94,16 +96,14 @@ if (!process.env.JWT_SECRET) {
 // roomId -> { clients: Set<WebSocket>, tree, files: Map<filePath, file> }
 //  - tree is the room's shared folder structure (see client fileTreeUtils.js);
 //    files holds the contents of exactly the file nodes in that tree
-// file = { code, revision, history, historyStart }
-//  - history[i] is the operation that produced revision historyStart + i + 1
-//  - only the most recent MAX_HISTORY operations are kept; a client whose base
-//    revision is older than that is resynced with a snapshot
+// file = { code }
+//  - code is the file's full text, overwritten by every accepted edit
+//    (last-write-wins; no revisions or edit history are kept)
 const rooms = new Map();
 // Upper bound on a single file's size (also used to cap run requests)
 const MAX_CODE_BYTES = 256 * 1024;
 // Stops a room from being flooded with an unbounded number of files
 const MAX_FILES_PER_ROOM = 200;
-const MAX_HISTORY = 1000;
 // How often (ms) an open socket re-checks that its session is still valid
 const WS_AUTH_RECHECK_MS = 60 * 1000;
 // Room IDs may only contain letters, digits, underscores and hyphens (1-64 chars)
@@ -440,7 +440,7 @@ server.on('upgrade', (req, socket, head) => {
 
 // Creates the server-side record for a file
 function newFile(code) {
-  return { code, revision: 0, history: [], historyStart: 0 };
+  return { code };
 }
 
 // The room a team starts with when nothing has been saved yet
@@ -759,7 +759,7 @@ function send(ws, message) {
   }
 }
 
-// Sends every file's contents and revision in a room to one client (initial sync)
+// Sends every file's contents in a room to one client (initial sync)
 function sendSnapshot(ws, room) {
   const files = Object.fromEntries(
     [...room.files].map(([filePath, file]) => [filePath, file.code])
@@ -770,19 +770,15 @@ function sendSnapshot(ws, room) {
     problemId: room.problemId,
     tree: room.tree,
     files,
-    revisions: Object.fromEntries(
-      [...room.files].map(([filePath, file]) => [filePath, file.revision])
-    ),
   });
 }
 
-// Sends one file's authoritative contents and revision to one client
+// Sends one file's authoritative contents to one client
 function sendFileSnapshot(ws, filePath, file) {
   send(ws, {
     type: 'FILE_SNAPSHOT',
     filePath,
     code: file.code,
-    revision: file.revision,
   });
 }
 
@@ -828,7 +824,8 @@ wss.on('connection', async (ws, req) => {
 
   // Messages are processed one at a time, in arrival order. Handlers are
   // async (auth check, Python run), so without this queue two edits could
-  // interleave and be applied against the wrong revision.
+  // interleave. The queue is also what defines "last" in last-write-wins:
+  // whichever edit is processed last is the one that stays.
   // The listener is attached immediately (before authentication finishes) so
   // a message the client sends as soon as the socket opens - e.g. SYNC_INIT -
   // isn't dropped; queued messages wait until `room` has been set up.
@@ -890,7 +887,7 @@ wss.on('connection', async (ws, req) => {
               sendSnapshot(ws, room);
               break;
 
-            // Client opens a file; reply with its current contents and revision
+            // Client opens a file; reply with its current contents
             case 'SELECT_FILE': {
               if (!isValidFilePath(data.filePath)) {
                 send(ws, { type: 'ERROR', error: 'Invalid file path.' });
@@ -906,17 +903,14 @@ wss.on('connection', async (ws, req) => {
               break;
             }
 
-            // Client reports an edit as an operation (see lib/textOp.js)
-            // made against file revision `baseRevision`
+            // Client reports an edit by sending the FULL new text of a file.
+            // Last-write-wins: the text simply replaces what the server holds.
             case 'TEXT_EDIT': {
-              const { filePath, op, baseRevision } = data;
-              //Typed into the previous problem's codebase
+              const { filePath, code } = data;
+              // Typed into the previous problem's codebase
               if (isStaleProblem(room, data)) return;
-              if (
-                !isValidFilePath(filePath) ||
-                !isValidOp(op) ||
-                !Number.isInteger(baseRevision)
-              ) {
+              // Shape check only. Any string is a valid file, including ''.
+              if (!isValidFilePath(filePath) || typeof code !== 'string') {
                 // filePath lets the client drop the rejected edit and resync
                 send(ws, {
                   type: 'ERROR',
@@ -936,33 +930,9 @@ wss.on('connection', async (ws, req) => {
                 return;
               }
 
-              // The client's base must be a revision we still have history
-              // for; otherwise resync it with the current contents
-              if (
-                baseRevision < file.historyStart ||
-                baseRevision > file.revision
-              ) {
-                sendFileSnapshot(ws, filePath, file);
-                return;
-              }
-
-              let transformed = op;
-              let updatedCode;
-              try {
-                // Rebase the edit over everything applied since the client's
-                // base revision so it fits the current document
-                for (const prior of file.history.slice(
-                  baseRevision - file.historyStart
-                )) {
-                  transformed = transform(transformed, prior)[0];
-                }
-                updatedCode = applyOp(file.code, transformed);
-              } catch {
-                sendFileSnapshot(ws, filePath, file);
-                return;
-              }
-
-              if (Buffer.byteLength(updatedCode, 'utf8') > MAX_CODE_BYTES) {
+              // Refuse oversized files and put the sender back on the server's
+              // copy so it does not keep showing text nobody else will see
+              if (Buffer.byteLength(code, 'utf8') > MAX_CODE_BYTES) {
                 send(ws, {
                   type: 'ERROR',
                   error: 'The edit makes the file too large.',
@@ -971,24 +941,21 @@ wss.on('connection', async (ws, req) => {
                 return;
               }
 
-              // Commit and record the operation in the file's history
-              file.code = updatedCode;
-              file.revision += 1;
-              file.history.push(transformed);
-              if (file.history.length > MAX_HISTORY) {
-                file.history.shift();
-                file.historyStart += 1;
-              }
+              // The write itself: overwrite the file with the new text. Nothing
+              // is merged with what was there before, so an edit another user
+              // made a moment ago is replaced by this one (last write wins).
+              file.code = code;
 
-              // Confirm to the sender (it has already applied the edit) and
-              // relay the rebased operation to everyone else
+              // Confirm to the sender, then relay the new text to everyone else.
+              // The ACK tells the sender its write has now been applied, which
+              // the client uses to know when it is safe to accept other users'
+              // text again (see CodeEditor.jsx).
               scheduleSave(room); // persist the new contents shortly
-              send(ws, { type: 'ACK', filePath, revision: file.revision });
+              send(ws, { type: 'ACK', filePath });
               broadcastToRoom(room, ws, {
                 type: 'TEXT_EDIT',
                 filePath,
-                op: transformed,
-                revision: file.revision,
+                code,
               });
               break;
             }
