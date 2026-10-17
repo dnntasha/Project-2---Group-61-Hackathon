@@ -257,11 +257,17 @@ function TeamsPanel({ group }) {
             />
           )}
 
-          {!locked && !teamData.currentTeamId && (
+          {!locked && !teamData.currentTeamId && !group.isAdmin && (
             <CreateTeam group={group} onCreated={loadTeams} />
           )}
 
-          {locked && !teamData.currentTeamId && (
+          {group.isAdmin && (
+            <p className="form-hint teams-locked-message">
+              As the admin you run the event and do not take part in a team.
+            </p>
+          )}
+
+          {!group.isAdmin && locked && !teamData.currentTeamId && (
             <p className="form-hint teams-locked-message">
               Team creation is closed because the event has started.
             </p>
@@ -486,6 +492,7 @@ function TeamCard({ team, group, locked, maxTeamSize, onChanged }) {
   // invited to it
   const eligibleMembers = (group.members || []).filter(
     (groupMember) =>
+      !groupMember.isAdmin &&
       !team.members.some((teamMember) => teamMember.id === groupMember.id) &&
       !team.invites.some((invite) => invite.userId === groupMember.id)
   );
