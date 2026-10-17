@@ -248,7 +248,6 @@ function TeamsPanel({ group }) {
         <>
           <PendingTeamInvites
             invites={teamData.pendingInvites}
-            locked={locked}
             onChanged={loadTeams}
           />
 
@@ -396,7 +395,7 @@ function CreateTeam({ group, onCreated }) {
   );
 }
 
-function PendingTeamInvites({ invites, locked, onChanged }) {
+function PendingTeamInvites({ invites, onChanged }) {
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState(null);
 
@@ -450,10 +449,10 @@ function PendingTeamInvites({ invites, locked, onChanged }) {
               <button
                 className="btn-primary btn-small"
                 type="button"
-                disabled={locked || busyId === invite.id}
+                disabled={busyId === invite.id}
                 onClick={() => handleInvite(invite.id, 'accept')}
               >
-                {locked ? 'Closed' : 'Accept'}
+                Accept
               </button>
             </div>
           </div>
