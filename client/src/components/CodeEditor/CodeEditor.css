@@ -291,29 +291,6 @@
   white-space: pre-wrap;
 }
 
-.editor-example {
-  display: grid;
-  grid-template-columns: auto 1fr 1fr;
-  align-items: start;
-  gap: 8px;
-  margin: 8px 0;
-  font-size: 13px;
-}
-
-.editor-example pre {
-  margin: 0;
-  padding: 6px 8px;
-  background: var(--code-bg);
-  border-radius: 4px;
-  overflow-x: auto;
-}
-
-@media (max-width: 900px) {
-  .editor-example {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
 /* ---- Submission report and timeline (spec 9 and 11) ---- */
 .editor-results {
   display: grid;

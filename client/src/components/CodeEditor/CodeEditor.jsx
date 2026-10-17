@@ -1034,13 +1034,6 @@ export default function CodeEditor({ roomId, wsUrl }) {
                   <strong>Output:</strong> {activeProblem.outputFormat}
                 </p>
               )}
-              {activeProblem.testCases?.slice(0, 2).map((test, index) => (
-                <div className="editor-example" key={test.id}>
-                  <span>Example {index + 1}</span>
-                  <pre>{test.input || '(no input)'}</pre>
-                  <pre>{test.expectedOutput}</pre>
-                </div>
-              ))}
               <p className="editor-hint">
                 Your main.py is run and its main() function is called. Read
                 input with input() and print the answer.
