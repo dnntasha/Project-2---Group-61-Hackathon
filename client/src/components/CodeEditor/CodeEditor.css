@@ -277,12 +277,15 @@
 }
 
 .editor-problem-details {
-  margin-top: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 
-.editor-problem-details summary {
-  cursor: pointer;
-  font-weight: 600;
+.editor-problem-title {
+  margin: 0 0 8px;
+  font-size: 24px;
+  line-height: 1.25;
   color: var(--text-h);
 }
 
@@ -291,27 +294,32 @@
   white-space: pre-wrap;
 }
 
-.editor-example {
+.editor-problem-formats {
   display: grid;
-  grid-template-columns: auto 1fr 1fr;
-  align-items: start;
-  gap: 8px;
-  margin: 8px 0;
-  font-size: 13px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  margin: 12px 0;
 }
 
-.editor-example pre {
-  margin: 0;
-  padding: 6px 8px;
+.editor-problem-formats > div {
+  padding: 10px 12px;
+  border-radius: 8px;
   background: var(--code-bg);
-  border-radius: 4px;
-  overflow-x: auto;
 }
 
-@media (max-width: 900px) {
-  .editor-example {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.editor-problem-formats dt {
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.editor-problem-formats dd {
+  margin: 0;
+  font-size: 14px;
+  white-space: pre-wrap;
 }
 
 /* ---- Submission report and timeline (spec 9 and 11) ---- */

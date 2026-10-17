@@ -758,7 +758,7 @@ function IconUpload({ group, onSaved }) {
 
       <p className="form-hint">PNG, JPEG, GIF or WebP, up to 2 MB.</p>
 
-      <label className="btn-secondary file-button">
+      <label className="btn-primary file-button">
         {busy ? 'Uploading…' : group.iconUrl ? 'Change icon' : 'Upload icon'}
 
         <input

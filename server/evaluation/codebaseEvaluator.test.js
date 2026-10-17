@@ -6,6 +6,7 @@ import {
   evaluateCodebase,
   formatTestResult,
   normaliseOutput,
+  runVisibleTests,
   validateCodebaseTree,
 } from './codebaseEvaluator.js';
 
@@ -310,5 +311,28 @@ test(
     ]);
 
     assert.equal(report.results[0].reason, 'Process limit exceeded.');
+  }
+);
+
+test(
+  'a practice run shows input, expected and actual output for each test',
+  { skip: skipWithoutDocker },
+  async () => {
+    const source = 'def main():\n    print(int(input()) * 2)\n';
+    const [pass, fail] = await runVisibleTests(
+      project(file('main.py', source)),
+      [
+        { input: '3\n', expectedOutput: '6\n' },
+        { input: '4\n', expectedOutput: '9\n' },
+      ]
+    );
+
+    assert.equal(pass.passed, true);
+    assert.equal(pass.input, '3\n');
+    assert.equal(pass.actualOutput.trim(), '6');
+    assert.equal(fail.passed, false);
+    assert.equal(fail.expectedOutput, '9\n');
+    assert.equal(fail.actualOutput.trim(), '8');
+    assert.equal(fail.reason, 'Incorrect output.');
   }
 );
