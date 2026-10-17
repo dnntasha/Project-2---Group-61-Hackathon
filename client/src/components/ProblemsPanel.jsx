@@ -9,6 +9,9 @@ export default function ProblemsPanel({ group }) {
   const [revealed, setRevealed] = useState(true);
   const [error, setError] = useState('');
   const [adding, setAdding] = useState(false);
+  // Which problem is open: a problem id, 'new' (the add form) or null. Only
+  // one thing is open at a time, so opening one collapses the other.
+  const [expandedId, setExpandedId] = useState(null);
 
   const canEdit = group.isAdmin && group.status === 'not-started';
 
@@ -46,6 +49,7 @@ export default function ProblemsPanel({ group }) {
       });
       e.target.reset();
       await reload();
+      setExpandedId(null);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -55,7 +59,18 @@ export default function ProblemsPanel({ group }) {
 
   return (
     <div className="panel">
-      <h2>Problems</h2>
+      <div className="problems-heading">
+        <h2>Problems</h2>
+        {canEdit && (
+          <button
+            className="btn-primary"
+            type="button"
+            onClick={() => setExpandedId(expandedId === 'new' ? null : 'new')}
+          >
+            {expandedId === 'new' ? 'Cancel' : 'New problem'}
+          </button>
+        )}
+      </div>
 
       {!group.isAdmin && !revealed && (
         <p className="form-hint">
@@ -76,7 +91,7 @@ export default function ProblemsPanel({ group }) {
       {problems?.length === 0 && revealed && (
         <p className="form-hint">
           {group.isAdmin
-            ? 'No problems yet. Add the first one below.'
+            ? 'No problems yet. Use New problem to add the first one.'
             : 'The admin has not added any problems.'}
         </p>
       )}
@@ -91,13 +106,17 @@ export default function ProblemsPanel({ group }) {
               canEdit={canEdit}
               isFirst={i === 0}
               isLast={i === problems.length - 1}
+              expanded={expandedId === problem.id}
+              onToggle={() =>
+                setExpandedId(expandedId === problem.id ? null : problem.id)
+              }
               onChanged={reload}
             />
           ))}
         </ol>
       )}
 
-      {canEdit && (
+      {canEdit && expandedId === 'new' && (
         <form className="problem-add" onSubmit={addProblem}>
           <h3>Add a problem</h3>
           <label>
@@ -143,10 +162,16 @@ function ProblemCard({
   canEdit,
   isFirst,
   isLast,
+  expanded,
+  onToggle,
   onChanged,
 }) {
   const [error, setError] = useState('');
   const [open, setOpen] = useState(false);
+
+  // Test cases are never shown by default: collapsing the problem hides them,
+  // so the next time it is expanded they start hidden again
+  if (!expanded && open) setOpen(false);
 
   async function act(path, options) {
     setError('');
@@ -163,7 +188,17 @@ function ProblemCard({
   return (
     <li className="problem-card">
       <div className="problem-head">
-        <strong>{problem.title}</strong>
+        <button
+          type="button"
+          className="problem-title"
+          onClick={onToggle}
+          aria-expanded={expanded}
+        >
+          <span className="problem-chevron" aria-hidden="true">
+            {expanded ? '▾' : '▸'}
+          </span>
+          <span className="problem-title-text">{problem.title}</span>
+        </button>
         {canEdit && (
           <span className="problem-actions">
             <button
@@ -191,7 +226,7 @@ function ProblemCard({
               ↓
             </button>
             <button
-              className="link-button danger"
+              className="problem-pill danger"
               onClick={() => {
                 if (
                   window.confirm(
@@ -208,47 +243,60 @@ function ProblemCard({
         )}
       </div>
 
-      <p className="problem-desc">{problem.description}</p>
+      <Collapsible open={expanded}>
+        <div className="problem-body">
+          <section className="problem-section">
+            <h4 className="problem-label">Description</h4>
+            <p className="problem-desc">{problem.description}</p>
+          </section>
 
-      {(problem.inputFormat || problem.outputFormat) && (
-        <dl className="problem-formats">
-          {problem.inputFormat && (
-            <div>
-              <dt>Input (stdin)</dt>
-              <dd>{problem.inputFormat}</dd>
-            </div>
+          {(problem.inputFormat || problem.outputFormat) && (
+            <dl className="problem-formats problem-section">
+              {problem.inputFormat && (
+                <div>
+                  <dt>Input (stdin)</dt>
+                  <dd>{problem.inputFormat}</dd>
+                </div>
+              )}
+              {problem.outputFormat && (
+                <div>
+                  <dt>Output (stdout)</dt>
+                  <dd>{problem.outputFormat}</dd>
+                </div>
+              )}
+            </dl>
           )}
-          {problem.outputFormat && (
-            <div>
-              <dt>Output (stdout)</dt>
-              <dd>{problem.outputFormat}</dd>
-            </div>
-          )}
-        </dl>
-      )}
 
-      <p className="form-hint">
-        {problem.submissionLimit > 0
-          ? `Up to ${problem.submissionLimit} submissions per team`
-          : 'Unlimited submissions'}
-      </p>
+          <div className="problem-footer">
+            <span className="problem-limit">
+              {problem.submissionLimit > 0
+                ? `Up to ${problem.submissionLimit} submissions per team`
+                : 'Unlimited submissions'}
+            </span>
 
-      <button className="link-button" onClick={() => setOpen(!open)}>
-        {open ? 'Hide' : 'Show'} test cases ({problem.testCases.length}
-        {problem.hiddenTestCount > 0
-          ? ` + ${problem.hiddenTestCount} hidden`
-          : ''}
-        )
-      </button>
+            <button
+              type="button"
+              className="problem-pill"
+              onClick={() => setOpen(!open)}
+            >
+              {open ? 'Hide' : 'Show'} test cases ({problem.testCases.length}
+              {problem.hiddenTestCount > 0
+                ? ` + ${problem.hiddenTestCount} hidden`
+                : ''}
+              )
+            </button>
+          </div>
 
-      {open && (
-        <TestCases
-          problem={problem}
-          groupId={groupId}
-          canEdit={canEdit}
-          onChanged={onChanged}
-        />
-      )}
+          <Collapsible open={open}>
+            <TestCases
+              problem={problem}
+              groupId={groupId}
+              canEdit={canEdit}
+              onChanged={onChanged}
+            />
+          </Collapsible>
+        </div>
+      </Collapsible>
 
       {error && (
         <p className="form-error" role="alert">
@@ -256,6 +304,16 @@ function ProblemCard({
         </p>
       )}
     </li>
+  );
+}
+
+// Animates its content open and closed. The content stays mounted so it can
+// slide shut; the CSS also hides it from keyboard and screen readers when closed.
+function Collapsible({ open, children }) {
+  return (
+    <div className={`collapsible${open ? ' open' : ''}`}>
+      <div className="collapsible-inner">{children}</div>
+    </div>
   );
 }
 
@@ -332,7 +390,8 @@ function TestCases({ problem, groupId, canEdit, onChanged }) {
                 {canEdit && (
                   <td>
                     <button
-                      className="link-button danger"
+                      type="button"
+                      className="problem-pill danger"
                       onClick={() => removeTest(t.id)}
                     >
                       Remove
