@@ -1,11 +1,309 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
+import { requireGroupMember } from '../middleware/groups.js';
+import { prisma } from '../lib/prisma.js';
 import {
   buildProblemLeaderboard,
   buildFinalLeaderboard,
 } from '../leaderboard/leaderboardService.js';
 
 const router = Router();
+
+/*
+ * Returns true if candidate is a better submission than current.
+ *
+ * Higher P is better.
+ * If P ties, lower T is better.
+ */
+function isBetterSubmission(candidate, current) {
+  if (!current) return true;
+
+  const candidateP = candidate.scoreP ?? 0;
+  const currentP = current.scoreP ?? 0;
+
+  const candidateT = candidate.scoreT ?? 0;
+  const currentT = current.scoreT ?? 0;
+
+  if (candidateP !== currentP) {
+    return candidateP > currentP;
+  }
+
+  return candidateT < currentT;
+}
+
+/*
+ * Takes Submission rows and keeps the best completed submission
+ * for each team/problem pair.
+ */
+function getBestSubmissions(submissions) {
+  const best = new Map();
+
+  for (const submission of submissions) {
+    const key = `${submission.teamId}:${submission.problemId}`;
+    const current = best.get(key);
+
+    if (isBetterSubmission(submission, current)) {
+      best.set(key, submission);
+    }
+  }
+
+  return [...best.values()];
+}
+
+/*
+ * GET /api/leaderboards/groups/:groupId/problems/:problemId
+ *
+ * Problem-specific leaderboard.
+ */
+router.get(
+  '/groups/:groupId/problems/:problemId',
+  requireAuth,
+  requireGroupMember,
+  async (req, res, next) => {
+    try {
+      const groupId = Number(req.params.groupId);
+      const problemId = Number(req.params.problemId);
+
+      if (!Number.isInteger(groupId) || !Number.isInteger(problemId)) {
+        return res.status(400).json({
+          error: 'Invalid group or problem ID.',
+        });
+      }
+
+      const problem = await prisma.problem.findFirst({
+        where: {
+          id: problemId,
+          groupId,
+        },
+      });
+
+      if (!problem) {
+        return res.status(404).json({
+          error: 'Problem not found in this group.',
+        });
+      }
+
+      const submissions = await prisma.submission.findMany({
+        where: {
+          problemId,
+          status: 'COMPLETED',
+          team: {
+            groupId,
+          },
+        },
+
+        select: {
+          id: true,
+          teamId: true,
+          problemId: true,
+          scoreP: true,
+          scoreT: true,
+          createdAt: true,
+
+          team: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+
+      const bestSubmissions = getBestSubmissions(submissions);
+
+      const scores = bestSubmissions.map((submission) => ({
+        teamId: submission.teamId,
+        teamName: submission.team.name,
+        P: submission.scoreP ?? 0,
+        T: submission.scoreT ?? 0,
+      }));
+
+      const leaderboard = buildProblemLeaderboard(scores);
+
+      return res.json({
+        groupId,
+        problemId,
+        submittingTeams: leaderboard.length,
+        leaderboard,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/*
+ * GET /api/leaderboards/groups/:groupId/final
+ *
+ * Final leaderboard calculated according to Section 12.
+ */
+router.get(
+  '/groups/:groupId/final',
+  requireAuth,
+  requireGroupMember,
+  async (req, res, next) => {
+    try {
+      const groupId = Number(req.params.groupId);
+
+      if (!Number.isInteger(groupId)) {
+        return res.status(400).json({
+          error: 'Invalid group ID.',
+        });
+      }
+
+      const group = await prisma.group.findUnique({
+        where: {
+          id: groupId,
+        },
+
+        select: {
+          id: true,
+          name: true,
+          topK: true,
+
+          teams: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+
+      if (!group) {
+        return res.status(404).json({
+          error: 'Group not found.',
+        });
+      }
+
+      const submissions = await prisma.submission.findMany({
+        where: {
+          status: 'COMPLETED',
+
+          team: {
+            groupId,
+          },
+        },
+
+        select: {
+          id: true,
+          teamId: true,
+          problemId: true,
+          scoreP: true,
+          scoreT: true,
+          createdAt: true,
+
+          team: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+
+      /*
+       * First select each team's best completed submission
+       * for each problem.
+       */
+      const bestSubmissions = getBestSubmissions(submissions);
+
+      /*
+       * Group the best submissions by problem.
+       */
+      const submissionsByProblem = new Map();
+
+      for (const submission of bestSubmissions) {
+        if (!submissionsByProblem.has(submission.problemId)) {
+          submissionsByProblem.set(submission.problemId, []);
+        }
+
+        submissionsByProblem.get(submission.problemId).push(submission);
+      }
+
+      /*
+       * Build a proper leaderboard for every problem.
+       *
+       * buildProblemLeaderboard handles:
+       * - P descending
+       * - T ascending
+       * - equal scores sharing the same position
+       */
+      const problemLeaderboards = new Map();
+
+      for (const [problemId, problemSubmissions] of submissionsByProblem) {
+        const scores = problemSubmissions.map((submission) => ({
+          teamId: submission.teamId,
+          teamName: submission.team.name,
+          P: submission.scoreP ?? 0,
+          T: submission.scoreT ?? 0,
+        }));
+
+        const leaderboard = buildProblemLeaderboard(scores);
+
+        problemLeaderboards.set(problemId, leaderboard);
+      }
+
+      /*
+       * Convert each team's problem results into the format expected
+       * by buildFinalLeaderboard().
+       *
+       * Each problem contributes:
+       * position
+       * submittingTeams
+       *
+       * The service then calculates:
+       *
+       * score_i = (position - 1) / (submittingTeams - 1)
+       */
+      const teamsForFinalLeaderboard = group.teams.map((team) => {
+        const problems = [];
+
+        for (const [problemId, leaderboard] of problemLeaderboards) {
+          const teamResult = leaderboard.find(
+            (entry) => entry.teamId === team.id
+          );
+
+          if (!teamResult) {
+            continue;
+          }
+
+          problems.push({
+            problemId,
+            position: teamResult.position,
+            submittingTeams: leaderboard.length,
+            P: teamResult.P,
+            T: teamResult.T,
+          });
+        }
+
+        return {
+          teamId: team.id,
+          teamName: team.name,
+          problems,
+        };
+      });
+
+      const leaderboard = buildFinalLeaderboard(
+        teamsForFinalLeaderboard,
+        group.topK
+      );
+
+      return res.json({
+        groupId: group.id,
+        groupName: group.name,
+        topK: group.topK,
+        leaderboard,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/*
+ * Old manual routes kept so existing tests/code continue to work.
+ */
 
 router.post('/problem', requireAuth, (req, res) => {
   const { scores } = req.body;
