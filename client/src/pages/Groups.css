@@ -696,3 +696,14 @@
     color: #f97066;
   }
 }
+
+/* Red dot shown left of the Admin/Member badge when a team invite is pending */
+.invite-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #e5484d;
+  flex-shrink: 0;
+}

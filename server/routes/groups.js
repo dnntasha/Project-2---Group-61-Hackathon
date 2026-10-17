@@ -170,10 +170,25 @@ router.get(
       },
     });
 
+    // Pending team invites for this user, so each group card can show a badge
+    const teamInvites = await prisma.teamInvite.findMany({
+      where: {
+        userId: req.user.id,
+        team: { groupId: { in: groups.map((g) => g.id) } },
+      },
+      select: { team: { select: { groupId: true } } },
+    });
+    const pendingByGroup = new Map();
+    for (const invite of teamInvites) {
+      const gid = invite.team.groupId;
+      pendingByGroup.set(gid, (pendingByGroup.get(gid) ?? 0) + 1);
+    }
+
     return res.json({
-      groups: groups.map((group) =>
-        toClient(group, group.adminId === req.user.id)
-      ),
+      groups: groups.map((group) => ({
+        ...toClient(group, group.adminId === req.user.id),
+        pendingInvites: pendingByGroup.get(group.id) ?? 0,
+      })),
     });
   })
 );

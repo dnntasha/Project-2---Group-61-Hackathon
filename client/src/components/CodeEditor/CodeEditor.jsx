@@ -66,21 +66,34 @@ const READ_ONLY_NOTICES = {
   ended: 'The event has ended. The code is now read-only.',
 };
 
-// Formats a RUN_RESULTS message as the text shown in the terminal panel
+// Formats a RUN_RESULTS message (one result per visible test case) as the text
+// shown in the terminal panel
 function getRunOutput(message) {
   if (message.error) return `Run failed: ${message.error}`;
 
-  const lines = [
-    '--- RUN OUTPUT ---',
-    `stdout:\n${message.stdout || '(no output)'}`,
-  ];
-  if (message.stderr) lines.push(`stderr:\n${message.stderr}`);
-  if (message.timedOut)
-    lines.push('Execution stopped after the 5-second limit.');
-  if (message.outputLimitExceeded)
-    lines.push('Output was truncated at the 64 KB limit.');
-  lines.push(`Exit code: ${message.exitCode}`);
-  return lines.join('\n\n');
+  const results = message.results ?? [];
+  if (results.length === 0) {
+    return 'This problem has no visible test cases to run.';
+  }
+
+  const passed = results.filter((result) => result.passed).length;
+  const blocks = results.map((result, index) => {
+    const lines = [
+      `Test ${index + 1}: ${result.passed ? 'PASSED' : 'FAILED'}`,
+      `Input:\n${result.input || '(empty)'}`,
+      `Expected output:\n${result.expectedOutput || '(empty)'}`,
+      `Your output:\n${result.actualOutput || '(no output)'}`,
+    ];
+    if (!result.passed && result.reason) lines.push(`Reason: ${result.reason}`);
+    if (result.stderr) lines.push(`stderr:\n${result.stderr}`);
+    return lines.join('\n');
+  });
+
+  return [
+    `--- RUN: ${passed} of ${results.length} visible tests passed ---`,
+    ...blocks,
+    'Hidden tests are only checked when you submit.',
+  ].join('\n\n');
 }
 
 /**
@@ -818,19 +831,18 @@ export default function CodeEditor({ roomId, wsUrl }) {
     applyLocalEdit(next, selectionStart + inserted.length);
   };
 
-  // Asks the server to run the current file; the result arrives as RUN_RESULTS
+  // Asks the server to run the team's code against the visible test cases;
+  // the results arrive as RUN_RESULTS
   const handleRunCode = () => {
     const requestId = `run-${Date.now()}-${++requestCounterRef.current}`;
     if (
       sendWsMessage({
         type: 'RUN_CODE',
         requestId,
-        filePath: activePathRef.current,
-        code: filesRef.current.get(activePathRef.current)?.text ?? '',
       })
     ) {
       setIsRunning(true);
-      setTerminalOutput('Running Python code...');
+      setTerminalOutput('Running the visible test cases...');
     }
   };
 

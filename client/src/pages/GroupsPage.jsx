@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import GroupIcon from '../components/GroupIcon.jsx';
 import InviteList from '../components/InviteList.jsx';
+import { useNotifications } from '../notifications/NotificationsContext.jsx';
 import './Groups.css';
 
 // Lists the user's groups and lets them create a new one.
@@ -12,11 +13,13 @@ export default function GroupsPage({ onOpen }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
+  const { tick } = useNotifications(); // re-load when invites change live
+
   useEffect(() => {
     api('/groups')
       .then((data) => setGroups(data.groups))
       .catch((err) => setLoadError(err.message));
-  }, []);
+  }, [tick]);
 
   async function handleCreate(e) {
     e.preventDefault();
@@ -98,6 +101,13 @@ export default function GroupsPage({ onOpen }) {
                   >
                     <GroupIcon group={group} />
                     <span className="group-card-name">{group.name}</span>
+                    {group.pendingInvites > 0 && (
+                      <span
+                        className="invite-dot"
+                        role="img"
+                        aria-label="Pending team invitation"
+                      />
+                    )}
                     <span className="member-badge">
                       {group.isAdmin ? 'Admin' : 'Member'}
                     </span>

@@ -54,7 +54,7 @@ import { EVENT_STATUS, getEndsAt, getEventStatus } from './lib/eventTime.js';
 
 import { processSubmission } from './submission/submissionService.js';
 import { failInterruptedSubmissions } from './submission/submissionResults.js';
-import { runPython } from './lib/pythonRunner.js';
+import { runVisibleTests } from './evaluation/codebaseEvaluator.js';
 import { applyOp, isValidOp, transform } from './lib/textOp.js';
 import { loadRoom, saveRoom } from './lib/roomStore.js';
 import { notifyGroup, register, unregister } from './lib/notifier.js';
@@ -1042,29 +1042,27 @@ wss.on('connection', async (ws, req) => {
               break;
             }
 
-            // Execute the supplied Python source in the sandboxed runner and
-            // return stdout/stderr to the requesting client only
+            // Practice run: the room's saved code is run against the problem's
+            // visible test cases only (hidden ones are graded on submit). The
+            // results go to the requesting client only.
             case 'RUN_CODE': {
-              if (typeof data.code !== 'string') {
+              const reply = (fields) =>
                 send(ws, {
                   type: 'RUN_RESULTS',
                   requestId: data.requestId,
-                  error: 'Python source code is required.',
+                  ...fields,
                 });
+
+              if (process.env.ENABLE_PYTHON_EXECUTION !== 'true') {
+                reply({ error: 'Python execution is disabled.' });
                 return;
               }
-              if (Buffer.byteLength(data.code, 'utf8') > MAX_CODE_BYTES) {
-                send(ws, {
-                  type: 'RUN_RESULTS',
-                  requestId: data.requestId,
-                  error: 'Code exceeds the 256 KB limit.',
-                });
+              if (room.problemId == null) {
+                reply({ error: 'No problem is selected for this team yet.' });
                 return;
               }
               if (ws.isRunning) {
-                send(ws, {
-                  type: 'RUN_RESULTS',
-                  requestId: data.requestId,
+                reply({
                   error: 'A run is already in progress for this connection.',
                 });
                 return;
@@ -1072,25 +1070,26 @@ wss.on('connection', async (ws, req) => {
 
               // Only one run per connection at a time
               ws.isRunning = true;
-              runPython(data.code)
-                .then((result) => {
-                  send(ws, {
-                    type: 'RUN_RESULTS',
-                    requestId: data.requestId,
-                    ...result,
-                  });
+              const problemId = room.problemId;
+              prisma.testCase
+                .findMany({
+                  where: { problemId, hidden: false },
+                  orderBy: { id: 'asc' },
                 })
+                .then((testCases) =>
+                  runVisibleTests(
+                    roomToCodebase(room.tree, room.files),
+                    testCases
+                  )
+                )
+                .then((results) => reply({ problemId, results }))
                 .catch((error) => {
                   console.error('Python execution failed:', error);
-                  send(ws, {
-                    type: 'RUN_RESULTS',
-                    requestId: data.requestId,
+                  reply({
                     error:
                       error.code === 'ENOENT'
                         ? 'Docker was not found on the server.'
-                        : error.message === 'Python execution is disabled.'
-                          ? error.message
-                          : 'Python execution could not be started.',
+                        : 'Python execution could not be started.',
                   });
                 })
                 .finally(() => {

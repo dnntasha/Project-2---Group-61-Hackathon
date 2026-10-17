@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { runPython } from './pythonRunner.js';
+import { runPython as runWithMain } from './pythonRunner.js';
+
+// The runner calls main() for the user, so these top-level scripts get a
+// no-op main() to satisfy it
+const runPython = (code, stdin) =>
+  runWithMain(`${code}\ndef main():\n    pass\n`, stdin);
 
 // These tests need the Docker sandbox; skip them (rather than fail) when it
 // is switched off or Docker isn't running
@@ -84,4 +89,19 @@ test('keeps multi-byte output intact', { skip }, async () => {
   const result = await runPython('print("é" * 5000)\n');
 
   assert.equal(result.stdout.trim(), 'é'.repeat(5000));
+});
+
+test('calls main() for the user, like grading does', { skip }, async () => {
+  const result = await runWithMain(
+    'def main():\n    print(input()[::-1])\n',
+    'olleh\n'
+  );
+
+  assert.equal(result.stdout.trim(), 'hello');
+});
+
+test('reports a missing main()', { skip }, async () => {
+  const result = await runWithMain('print("hi")\n');
+
+  assert.equal(result.stderr, 'main() is not defined.');
 });
