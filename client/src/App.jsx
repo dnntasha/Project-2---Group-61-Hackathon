@@ -9,6 +9,7 @@ import CodeEditor from './components/CodeEditor/CodeEditor.jsx';
 import GroupsPage from './pages/GroupsPage.jsx';
 import GroupPage from './pages/GroupPage.jsx';
 import NavBar from './components/NavBar/NavBar.jsx';
+import LeaderboardPage from './pages/LeaderboardPage.jsx';
 import { NotificationsProvider } from './notifications/NotificationsContext.jsx';
 
 import './App.css';
@@ -61,6 +62,7 @@ function AppRoutes() {
           <Route path="/home" element={<LandingPage />} />
           <Route path="/dashboard" element={<DashboardLayout />} />
           <Route path="/coding" element={<CodeEditor />} />
+          <Route path="/leaderboard" element={<LeaderboardPage />} />
           {/* Old links */}
           <Route
             path="/groups"

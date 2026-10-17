@@ -347,10 +347,12 @@ router.get(
         username: admin.username,
       },
 
-      members: members.map((member) => ({
-        id: member.user.id,
-        username: member.user.username,
-      })),
+      members: members
+        .filter((m) => m.user.id !== req.group.adminId)
+        .map((m) => ({
+          id: m.user.id,
+          username: m.user.username,
+        })),
 
       invites: invites.map((invite) => ({
         id: invite.id,

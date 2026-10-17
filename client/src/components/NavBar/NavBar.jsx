@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { label: 'Home', to: '/home' },
   { label: 'Groups', to: '/dashboard' },
   { label: 'Coding', to: '/coding' },
+  { label: 'Leaderboard', to: '/leaderboard' },
 ];
 
 export default function NavBar() {
