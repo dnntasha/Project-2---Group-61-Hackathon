@@ -251,3 +251,87 @@
     color: #16171d;
   }
 }
+
+/* ---- Current problem (spec 8) ---- */
+.editor-problem {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.editor-problem-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.editor-problem-bar select {
+  max-width: 100%;
+}
+
+.editor-hint {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.editor-problem-details {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.editor-problem-title {
+  margin: 0 0 8px;
+  font-size: 24px;
+  line-height: 1.25;
+  color: var(--text-h);
+}
+
+.editor-problem-text {
+  margin: 8px 0;
+  white-space: pre-wrap;
+}
+
+.editor-problem-formats {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.editor-problem-formats > div {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--code-bg);
+}
+
+.editor-problem-formats dt {
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.editor-problem-formats dd {
+  margin: 0;
+  font-size: 14px;
+  white-space: pre-wrap;
+}
+
+/* ---- Submission report and timeline (spec 9 and 11) ---- */
+.editor-results {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 20px;
+  margin-top: 20px;
+}
+
+@media (max-width: 900px) {
+  .editor-results {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

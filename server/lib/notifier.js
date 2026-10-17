@@ -10,6 +10,7 @@
  * `register` / `unregister` as sockets connect and disconnect.
  */
 import { WebSocket } from 'ws';
+import { prisma } from './prisma.js';
 
 // userId -> Set of that user's open sockets. A Set because the same person can
 // have several tabs or devices open at once and all of them should be told.
@@ -47,5 +48,31 @@ export function notifyUser(userId, event) {
 export function notifyInvitesChanged(...userIds) {
   for (const userId of new Set(userIds)) {
     notifyUser(userId, { type: 'INVITES_CHANGED' });
+  }
+}
+
+/**
+ * Sends `event` to the admin and every member of a group, e.g.
+ * { type: 'GROUP_CHANGED' } when the event starts, { type: 'TEAMS_CHANGED' }
+ * when a team is created/joined/left and { type: 'LEADERBOARD_CHANGED' }
+ * after a submission is graded. Never throws: a failed notification must not
+ * fail the request that triggered it.
+ */
+export async function notifyGroup(groupId, event) {
+  try {
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      select: { adminId: true, members: { select: { userId: true } } },
+    });
+    if (!group) return;
+    const userIds = new Set([
+      group.adminId,
+      ...group.members.map((member) => member.userId),
+    ]);
+    for (const userId of userIds) {
+      notifyUser(userId, { ...event, groupId });
+    }
+  } catch (error) {
+    console.error('Could not send group notification:', error);
   }
 }

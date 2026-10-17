@@ -82,10 +82,8 @@ export function NotificationsProvider({ children }) {
         } catch {
           return;
         }
-        if (message.type === 'INVITES_CHANGED') {
-          refreshCount();
-          setTick((t) => t + 1);
-        }
+        if (message.type === 'INVITES_CHANGED') refreshCount();
+        if (typeof message.type === 'string') setTick((t) => t + 1);
       };
 
       socket.onclose = (event) => {

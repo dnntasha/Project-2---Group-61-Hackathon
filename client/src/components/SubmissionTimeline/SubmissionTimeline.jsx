@@ -22,18 +22,24 @@ function formatDate(timestamp) {
   return date.toLocaleString();
 }
 
-export default function SubmissionTimeline({ submissions = [] }) {
+export default function SubmissionTimeline({
+  submissions = [],
+  onSelect,
+  selectedId,
+}) {
   return (
     <section className="submission-timeline">
       <div className="timeline-heading">
-        <div>
+        <div className="timeline-title">
           <h2>Submission Timeline</h2>
-          <p>Previous submissions for this problem</p>
+          <span
+            className="submission-count"
+            aria-label={`${submissions.length} submission${submissions.length === 1 ? '' : 's'}`}
+          >
+            {submissions.length}
+          </span>
         </div>
-
-        <span className="submission-count">
-          {submissions.length} submission{submissions.length === 1 ? '' : 's'}
-        </span>
+        <p>Previous submissions for this problem</p>
       </div>
 
       {submissions.length === 0 ? (
@@ -45,6 +51,21 @@ export default function SubmissionTimeline({ submissions = [] }) {
           {submissions.map((submission, index) => {
             const passed =
               submission.passed ?? submission.evaluation?.passed ?? false;
+
+            const statusText =
+              submission.status === 'PENDING'
+                ? 'Grading...'
+                : submission.status === 'FAILED'
+                  ? 'Not graded'
+                  : passed
+                    ? 'Accepted'
+                    : 'Failed';
+            const statusClass =
+              submission.status === 'PENDING' || submission.status === 'FAILED'
+                ? 'timeline-status-neutral'
+                : passed
+                  ? 'timeline-status-passed'
+                  : 'timeline-status-failed';
 
             const passedTests =
               submission.passedTests ?? submission.evaluation?.passedTests ?? 0;
@@ -66,7 +87,7 @@ export default function SubmissionTimeline({ submissions = [] }) {
               <li
                 className={`timeline-item ${
                   passed ? 'timeline-passed' : 'timeline-failed'
-                }`}
+                }${submission.id === selectedId ? ' timeline-selected' : ''}`}
                 key={submission.id ?? `${submission.timestamp}-${index}`}
               >
                 <div className="timeline-marker" aria-hidden="true" />
@@ -80,8 +101,8 @@ export default function SubmissionTimeline({ submissions = [] }) {
                       </span>
                     </div>
 
-                    <span className="timeline-status">
-                      {passed ? 'Accepted' : 'Failed'}
+                    <span className={`timeline-status ${statusClass}`}>
+                      {statusText}
                     </span>
                   </div>
 
@@ -105,6 +126,16 @@ export default function SubmissionTimeline({ submissions = [] }) {
                       <strong>{formatRuntime(T)}</strong>
                     </div>
                   </div>
+                  {onSelect && (
+                    <button
+                      type="button"
+                      className="timeline-view"
+                      onClick={() => onSelect(submission)}
+                      aria-pressed={submission.id === selectedId}
+                    >
+                      View report
+                    </button>
+                  )}
                 </article>
               </li>
             );

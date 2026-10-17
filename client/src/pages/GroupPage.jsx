@@ -5,6 +5,7 @@ import Countdown from '../components/Countdown.jsx';
 import ProblemsPanel from '../components/ProblemsPanel.jsx';
 import GroupMembers from '../components/GroupMembers.jsx';
 import { useNotifications } from '../notifications/NotificationsContext.jsx';
+import { useNavigate } from '../router.jsx';
 import './Groups.css';
 
 const STATUS_TEXT = {
@@ -41,12 +42,14 @@ export default function GroupPage({ groupId, onBack }) {
   const [group, setGroup] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [tab, setTab] = useState('members');
+  //the signed in user's team to be highlited
+  const { tick } = useNotifications();
 
   useEffect(() => {
     api(`/groups/${groupId}`)
       .then((data) => setGroup(data.group))
       .catch((err) => setLoadError(err.message));
-  }, [groupId]);
+  }, [groupId, tick]);
 
   // Settings, icon and start responses don't include the member list, so
   // merge them into the loaded group instead of replacing it
@@ -55,13 +58,21 @@ export default function GroupPage({ groupId, onBack }) {
   }, []);
 
   // Only the admin gets the problems and settings pages
-  const tabs = group?.isAdmin
-    ? [
-        { key: 'members', label: 'Members & teams' },
-        { key: 'problems', label: 'Problems' },
-        { key: 'settings', label: 'Settings' },
-      ]
-    : [{ key: 'members', label: 'Members & teams' }];
+  const started = group && group.status !== 'not-started';
+  const tabs = [
+    { key: 'members', label: 'Members & teams' },
+    ...(group?.isAdmin || started
+      ? [{ key: 'problems', label: 'Problems' }]
+      : []),
+    ...(group?.isAdmin ? [{ key: 'settings', label: 'Settings' }] : []),
+  ];
+  // const tabs = group?.isAdmin
+  //   ? [
+  //       { key: 'members', label: 'Members & teams' },
+  //       { key: 'problems', label: 'Problems' },
+  //       { key: 'settings', label: 'Settings' },
+  //     ]
+  //   : [{ key: 'members', label: 'Members & teams' }];
 
   const activeTab = tabs.some(({ key }) => key === tab) ? tab : 'members';
 
@@ -241,7 +252,11 @@ function TeamsPanel({ group }) {
             onChanged={loadTeams}
           />
 
-          {locked && teamData.currentTeamId && <AssignedProblem />}
+          {locked && teamData.currentTeamId && (
+            <AssignedProblem
+              team={teamData.teams.find((t) => t.id === teamData.currentTeamId)}
+            />
+          )}
 
           {!locked && !teamData.currentTeamId && (
             <CreateTeam group={group} onCreated={loadTeams} />
@@ -279,13 +294,31 @@ function TeamsPanel({ group }) {
 
 // Problems are assigned to teams by a later feature; until then there is
 // nothing to show
-function AssignedProblem() {
+function AssignedProblem({ team }) {
+  const navigate = useNavigate();
+  const problem = team?.activeProblem;
   return (
     <div className="team-card team-card-current">
       <h3>Your team&apos;s problem</h3>
       <p className="form-hint">
-        No problem has been assigned to your team yet.
+        {problem
+          ? `${problem.orderIndex + 1}. ${problem.title}`
+          : 'No problem has been assigned to your team yet.'}{' '}
+        {team?.isCurrentUserLeader
+          ? 'As the leader you choose the problem in the code editor.'
+          : 'Your team leader chooses the problem in the code editor'}
       </p>
+      {team && (
+        <div className="team-actions">
+          <button
+            className="btn-primary"
+            type="button"
+            onClick={() => navigate(`/coding?roomId=team-${team.id}`)}
+          >
+            Open code editor
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -725,7 +758,7 @@ function IconUpload({ group, onSaved }) {
 
       <p className="form-hint">PNG, JPEG, GIF or WebP, up to 2 MB.</p>
 
-      <label className="btn-secondary file-button">
+      <label className="btn-primary file-button">
         {busy ? 'Uploading…' : group.iconUrl ? 'Change icon' : 'Upload icon'}
 
         <input

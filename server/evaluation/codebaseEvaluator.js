@@ -263,6 +263,7 @@ export async function evaluateTestCase(temporaryDirectory, testCase) {
  */
 export function formatTestResult(testCase, result) {
   const formattedResult = {
+    ...(testCase.id !== undefined && { testCaseId: testCase.id }),
     passed: result.passed,
     hidden: testCase.hidden ?? false,
     runtimeMs: result.runtimeMs,
@@ -387,6 +388,65 @@ export async function evaluateCodebase(codebase, testCases = []) {
       results,
       entryFailure ? entryFailure.reason : null
     );
+  } finally {
+    if (temporaryDirectory) {
+      await removeTemporaryCodebase(temporaryDirectory);
+    }
+  }
+}
+
+/**
+ * Runs a codebase against the given (non-hidden) test cases for the editor's
+ * Run button. Unlike a submission nothing is scored or saved, and every result
+ * shows the input, expected output and actual output, pass or fail. Callers
+ * must only pass test cases the user is allowed to see.
+ */
+export async function runVisibleTests(codebase, testCases = []) {
+  let temporaryDirectory;
+
+  try {
+    temporaryDirectory = await createTemporaryCodebase(codebase);
+
+    const entryPoint = await validatePythonEntryPoint(temporaryDirectory);
+    const results = [];
+    let entryFailure = entryPoint.valid ? null : entryPoint.reason;
+
+    for (const testCase of testCases) {
+      const base = {
+        testCaseId: testCase.id,
+        input: testCase.input ?? '',
+        expectedOutput: testCase.expectedOutput ?? '',
+      };
+
+      // A missing entry point fails every test the same way, so skip running
+      if (entryFailure) {
+        results.push({
+          ...base,
+          passed: false,
+          actualOutput: '',
+          stderr: '',
+          runtimeMs: 0,
+          reason: entryFailure,
+        });
+        continue;
+      }
+
+      const result = await evaluateTestCase(temporaryDirectory, testCase);
+      if (result.reason === MAIN_UNDEFINED_REASON) {
+        entryFailure = result.reason;
+      }
+
+      results.push({
+        ...base,
+        passed: result.passed,
+        actualOutput: result.stdout,
+        stderr: result.stderr,
+        runtimeMs: result.runtimeMs,
+        reason: result.reason,
+      });
+    }
+
+    return results;
   } finally {
     if (temporaryDirectory) {
       await removeTemporaryCodebase(temporaryDirectory);

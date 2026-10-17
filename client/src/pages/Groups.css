@@ -584,14 +584,21 @@
   color: var(--text-h);
 }
 
+/* Match the team/problem selectors on the code editor page */
 .settings-row input {
-  width: 110px;
+  width: 100px;
   flex-shrink: 0;
-  text-align: right;
+  box-sizing: border-box;
+  text-align: center;
+  font-size: 15px;
+  padding: 4px 10px;
+  min-height: 32px;
+  border-radius: 6px;
 }
 
 .settings-row input:disabled {
   opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .settings-list + .form-actions {
@@ -695,4 +702,15 @@
   .form-error {
     color: #f97066;
   }
+}
+
+/* Red dot shown left of the Admin/Member badge when a team invite is pending */
+.invite-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #e5484d;
+  flex-shrink: 0;
 }

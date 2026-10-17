@@ -70,6 +70,9 @@ router.get('/group/:groupId', requireAuth, async (req, res, next) => {
                 username: true,
               },
             },
+            activeProblem: {
+              select: { id: true, title: true, orderIndex: true },
+            },
             invites: {
               orderBy: {
                 createdAt: 'asc',
@@ -182,6 +185,7 @@ router.get('/group/:groupId', requireAuth, async (req, res, next) => {
           : [],
         isCurrentUserMember,
         isCurrentUserLeader: team.leaderId === req.user.id,
+        activeProblem: isCurrentUserMember ? team.activeProblem : null,
       };
     });
 

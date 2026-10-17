@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink } from '../../router.jsx';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { useNotifications } from '../../notifications/NotificationsContext.jsx';
 import './NavBar.css';

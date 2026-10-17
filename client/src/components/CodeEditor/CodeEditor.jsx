@@ -5,8 +5,10 @@ import {
   useRef,
   useState,
 } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from '../../router.jsx';
 import FileTree from '../FileTree/FileTree.jsx';
+import ResponseArea from '../ResponseArea/ResponseArea.jsx';
+import SubmissionTimeline from '../SubmissionTimeline/SubmissionTimeline.jsx';
 import { api, getToken } from '../../api.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { getFilePathsById } from '../FileTree/fileTreeUtils.js';
@@ -32,23 +34,29 @@ const MAX_RETRY_MS = 15000;
 const NO_RECONNECT_CODES = new Set([1003, 1008, 4001, 4003]);
 
 // Builds the WebSocket URL, defaulting to ws(s)://<current host>/ws.
-function getWebSocketUrl(wsUrl, roomId, problemId) {
+function getWebSocketUrl(wsUrl, roomId) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const url = new URL(wsUrl || `${protocol}//${window.location.host}/ws`);
 
   url.searchParams.set('roomId', roomId);
-  url.searchParams.set('problemId', problemId);
   return url.toString();
 }
 
 // Opens the socket. Browsers can't set headers on a WebSocket, so the session
 // token is sent as a second subprotocol rather than in the URL, where it would
 // be written to server and proxy logs.
-function openEditorSocket(wsUrl, roomId, problemId) {
-  return new WebSocket(getWebSocketUrl(wsUrl, roomId, problemId), [
+function openEditorSocket(wsUrl, roomId) {
+  return new WebSocket(getWebSocketUrl(wsUrl, roomId), [
     'bearer',
     getToken() ?? '',
   ]);
+}
+
+// One-line summary of a graded submission for the terminal panel
+function getSubmissionSummary(result) {
+  if (!result.success) return `Submission failed: ${result.error}`;
+  const { passedTests, totalTests } = result.evaluation;
+  return `Submission graded: ${passedTests}/${totalTests} tests passed. See the report below.`;
 }
 
 // What to tell the user while the code is read-only
@@ -58,21 +66,34 @@ const READ_ONLY_NOTICES = {
   ended: 'The event has ended. The code is now read-only.',
 };
 
-// Formats a RUN_RESULTS message as the text shown in the terminal panel
+// Formats a RUN_RESULTS message (one result per visible test case) as the text
+// shown in the terminal panel
 function getRunOutput(message) {
   if (message.error) return `Run failed: ${message.error}`;
 
-  const lines = [
-    '--- RUN OUTPUT ---',
-    `stdout:\n${message.stdout || '(no output)'}`,
-  ];
-  if (message.stderr) lines.push(`stderr:\n${message.stderr}`);
-  if (message.timedOut)
-    lines.push('Execution stopped after the 5-second limit.');
-  if (message.outputLimitExceeded)
-    lines.push('Output was truncated at the 64 KB limit.');
-  lines.push(`Exit code: ${message.exitCode}`);
-  return lines.join('\n\n');
+  const results = message.results ?? [];
+  if (results.length === 0) {
+    return 'This problem has no visible test cases to run.';
+  }
+
+  const passed = results.filter((result) => result.passed).length;
+  const blocks = results.map((result, index) => {
+    const lines = [
+      `Test ${index + 1}: ${result.passed ? 'PASSED' : 'FAILED'}`,
+      `Input:\n${result.input || '(empty)'}`,
+      `Expected output:\n${result.expectedOutput || '(empty)'}`,
+      `Your output:\n${result.actualOutput || '(no output)'}`,
+    ];
+    if (!result.passed && result.reason) lines.push(`Reason: ${result.reason}`);
+    if (result.stderr) lines.push(`stderr:\n${result.stderr}`);
+    return lines.join('\n');
+  });
+
+  return [
+    `--- RUN: ${passed} of ${results.length} visible tests passed ---`,
+    ...blocks,
+    'Hidden tests are only checked when you submit.',
+  ].join('\n\n');
 }
 
 /**
@@ -101,10 +122,9 @@ function getRunOutput(message) {
  *
  * Props:
  *  - roomId:    room to join (falls back to ?roomId=, then the user's own room)
- *  - problemId: problem identifier sent to the server
  *  - wsUrl:     optional override of the WebSocket URL
  */
-export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
+export default function CodeEditor({ roomId, wsUrl }) {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const [teams, setTeams] = useState([]);
@@ -202,6 +222,60 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   // Caret/selection to restore after a remote edit re-renders the textarea
   const pendingSelectionRef = useRef(null);
   const requestCounterRef = useRef(0);
+  // Problem whose codebase the room is showing (from INIT_CODEBASE)
+  const problemIdRef = useRef(null);
+  const [problems, setProblems] = useState([]);
+  const [activeProblemId, setActiveProblemId] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  // The report shown in the response area (latest result or a timeline item)
+  const [shownSubmission, setShownSubmission] = useState(null);
+  const [timeline, setTimeline] = useState({
+    submissions: [],
+    used: 0,
+    submissionLimit: 0,
+  });
+  // Bumped after each submission so the timeline reloads
+  const [timelineVersion, setTimelineVersion] = useState(0);
+
+  const isLeader = Boolean(selectedTeam && selectedTeam.leaderId === user?.id);
+  const activeProblem = problems.find(
+    (problem) => problem.id === activeProblemId
+  );
+  const groupId = selectedTeam?.groupId;
+  const teamId = selectedTeam?.id;
+
+  // Shows a graded submission if it belongs to the problem on screen
+  const showSubmissionResult = useCallback((problemId, result) => {
+    setTerminalOutput(getSubmissionSummary(result));
+    if (problemId === undefined || problemId === problemIdRef.current) {
+      setShownSubmission(
+        result.success
+          ? { id: result.submissionId, evaluation: result.evaluation }
+          : { error: result.error }
+      );
+    }
+    setTimelineVersion((version) => version + 1);
+  }, []);
+
+  // The submission timeline of the current problem
+  useEffect(() => {
+    if (!teamId || !activeProblemId) {
+      setTimeline({ submissions: [], used: 0, submissionLimit: 0 });
+      return undefined;
+    }
+    let active = true;
+    api(`/teams/${teamId}/submissions?problemId=${activeProblemId}`)
+      .then((data) => active && setTimeline(data))
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [teamId, activeProblemId, timelineVersion]);
+
+  // A different problem has a different report
+  useEffect(() => {
+    setShownSubmission(null);
+  }, [activeProblemId, teamId]);
 
   // Keep the ref in sync with state on every render
   activePathRef.current = activeFilePath;
@@ -240,6 +314,7 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
       if (
         sendWsMessage({
           type: 'TEXT_EDIT',
+          problemId: problemIdRef.current,
           filePath,
           op: file.buffer,
           baseRevision: file.revision,
@@ -391,12 +466,18 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
         // Full room state on connect: show the active file, or request it if
         // the room doesn't have it yet
         case 'INIT_CODEBASE': {
+          // A different problemId means the leader switched, not a reconnect
+          const switchedProblem =
+            problemIdRef.current !== null &&
+            message.problemId !== problemIdRef.current;
+          problemIdRef.current = message.problemId ?? null;
+          setActiveProblemId(message.problemId ?? null);
           // After a reconnect, anything typed that never reached the server is
           // replaced by the team's version; say so rather than lose it quietly
           const unsynced = [...filesRef.current.values()].filter(
             (file) => file.outstanding || file.buffer
           ).length;
-          if (unsynced > 0) {
+          if (unsynced > 0 && !switchedProblem) {
             setTerminalOutput(
               `Reconnected. ${unsynced} file${unsynced === 1 ? '' : 's'} had changes that could not be sent and were reset to the team's version.`
             );
@@ -451,6 +532,20 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
           setTerminalOutput(message.message);
           break;
 
+        // The leader submitted; grading is running on the server
+        case 'SUBMISSION_STARTED':
+          setIsSubmitting(true);
+          setTerminalOutput(
+            `${message.username} submitted the code for grading. Running the tests...`
+          );
+          break;
+
+        // The graded report, sent to everyone in the team
+        case 'SUBMISSION_RESULT':
+          setIsSubmitting(false);
+          showSubmissionResult(message.problemId, message.result);
+          break;
+
         // The event started or ended (also sent once on connecting)
         case 'EVENT_STATUS':
           setEventStatus(message.status);
@@ -478,7 +573,14 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
           break;
       }
     },
-    [applyRemoteEdit, applyTreeUpdate, flushFile, resetFile, showFile]
+    [
+      applyRemoteEdit,
+      applyTreeUpdate,
+      flushFile,
+      resetFile,
+      showFile,
+      showSubmissionResult,
+    ]
   );
 
   // Open the socket when the room/problem/url changes and close it on cleanup.
@@ -503,6 +605,8 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
     setIsConnected(false);
     setIsReconnecting(false);
     setEventStatus(null);
+    problemIdRef.current = null;
+    setActiveProblemId(null);
     setIsReady(false);
     setIsRunning(false);
     setIsFileLoading(false);
@@ -515,7 +619,7 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
 
     function connect() {
       try {
-        socket = openEditorSocket(wsUrl, activeRoomId, problemId);
+        socket = openEditorSocket(wsUrl, activeRoomId);
       } catch (error) {
         setTerminalOutput(`Could not connect to the editor: ${error.message}`);
         return;
@@ -588,7 +692,21 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
       socket?.close();
       if (socketRef.current === socket) socketRef.current = null;
     };
-  }, [activeRoomId, handleIncomingMessage, problemId, wsUrl]);
+  }, [activeRoomId, handleIncomingMessage, wsUrl]);
+
+  useEffect(() => {
+    if (!groupId) {
+      setProblems([]);
+      return undefined;
+    }
+    let active = true;
+    api(`/groups/${groupId}/problems`)
+      .then((data) => active && setProblems(data.problems ?? []))
+      .catch(() => active && setProblems([]));
+    return () => {
+      active = false;
+    };
+  }, [groupId, eventStatus]);
 
   // Applies a local change immediately, then syncs it to the server.
   // `cursor` (a caret position, or a { start, end } selection) is restored
@@ -632,7 +750,11 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   // appears when the server's TREE_UPDATE comes back
   const handleTreeOperation = useCallback(
     (operation) => {
-      sendWsMessage({ type: 'TREE_OPERATION', operation });
+      sendWsMessage({
+        type: 'TREE_OPERATION',
+        problemId: problemIdRef.current,
+        operation,
+      });
     },
     [sendWsMessage]
   );
@@ -709,19 +831,54 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
     applyLocalEdit(next, selectionStart + inserted.length);
   };
 
-  // Asks the server to run the current file; the result arrives as RUN_RESULTS
+  // Asks the server to run the team's code against the visible test cases;
+  // the results arrive as RUN_RESULTS
   const handleRunCode = () => {
     const requestId = `run-${Date.now()}-${++requestCounterRef.current}`;
     if (
       sendWsMessage({
         type: 'RUN_CODE',
         requestId,
-        filePath: activePathRef.current,
-        code: filesRef.current.get(activePathRef.current)?.text ?? '',
       })
     ) {
       setIsRunning(true);
-      setTerminalOutput('Running Python code...');
+      setTerminalOutput('Running the visible test cases...');
+    }
+  };
+
+  // Leader only: grade the team's saved code for the current problem via
+  // @Thando's POST /api/submit. The room also gets the result over the socket.
+  const handleSubmit = async () => {
+    const ok = window.confirm(
+      `Submit the current code for "${activeProblem?.title ?? 'this problem'}"?`
+    );
+    if (!ok) return;
+    const problemId = activeProblemId;
+    setIsSubmitting(true);
+    setTerminalOutput('Submitting...');
+    try {
+      const result = await api('/submit', {
+        method: 'POST',
+        body: { teamId, problemId },
+      });
+      showSubmissionResult(problemId, result);
+    } catch (error) {
+      showSubmissionResult(problemId, { success: false, error: error.message });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const attemptsLeft =
+    timeline.submissionLimit > 0
+      ? Math.max(0, timeline.submissionLimit - timeline.used)
+      : null;
+
+  // Leader only: switch the whole team to another problem
+  const handleSelectProblem = (event) => {
+    const problemId = Number(event.target.value);
+    if (problemId && problemId !== problemIdRef.current) {
+      sendWsMessage({ type: 'SELECT_PROBLEM', problemId });
     }
   };
 
@@ -806,14 +963,28 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
           >
             {isRunning ? 'Running...' : 'Run Python'}
           </button>
-          <button
-            className="editor-btn"
-            type="button"
-            disabled
-            title="Grading will be added later."
-          >
-            Submit solution (coming soon)
-          </button>
+          {isLeader ? (
+            <button
+              className="editor-btn"
+              type="button"
+              onClick={handleSubmit}
+              disabled={
+                !isReady ||
+                isSubmitting ||
+                eventStatus !== 'running' ||
+                !activeProblemId ||
+                attemptsLeft === 0
+              }
+            >
+              {isSubmitting ? 'Grading...' : 'Submit solution'}
+            </button>
+          ) : (
+            selectedTeam && (
+              <span className="editor-hint">
+                Only the team leader can submit.
+              </span>
+            )
+          )}
         </div>
       </header>
 
@@ -821,6 +992,62 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
         <p className="editor-notice" role="status">
           {readOnlyNotice}
         </p>
+      )}
+
+      {activeRoomId && eventStatus && eventStatus !== 'not-started' && (
+        <section className="editor-problem" aria-label="Current problem">
+          <div className="editor-problem-bar">
+            <label htmlFor="editor-problem-select">Problem: </label>
+            <select
+              id="editor-problem-select"
+              className="editor-team-select"
+              value={activeProblemId ?? ''}
+              onChange={handleSelectProblem}
+              disabled={!isLeader || !isConnected || problems.length === 0}
+            >
+              {!activeProblem && <option value="">—</option>}
+              {problems.map((problem) => (
+                <option key={problem.id} value={problem.id}>
+                  {problem.orderIndex + 1}. {problem.title}
+                </option>
+              ))}
+            </select>
+            <span className="editor-hint">
+              {isLeader
+                ? 'You choose the problem for the whole team.'
+                : 'The team leader chooses the problem.'}
+              {attemptsLeft !== null &&
+                ` ${attemptsLeft} of ${timeline.submissionLimit} attempts left.`}
+            </span>
+          </div>
+
+          {activeProblem && (
+            <div className="editor-problem-details">
+              <h2 className="editor-problem-title">{activeProblem.title}</h2>
+              <p className="editor-problem-text">{activeProblem.description}</p>
+              {(activeProblem.inputFormat || activeProblem.outputFormat) && (
+                <dl className="editor-problem-formats">
+                  {activeProblem.inputFormat && (
+                    <div>
+                      <dt>Input</dt>
+                      <dd>{activeProblem.inputFormat}</dd>
+                    </div>
+                  )}
+                  {activeProblem.outputFormat && (
+                    <div>
+                      <dt>Output</dt>
+                      <dd>{activeProblem.outputFormat}</dd>
+                    </div>
+                  )}
+                </dl>
+              )}
+              <p className="editor-hint">
+                Your main.py is run and its main() function is called. Read
+                input with input() and print the answer.
+              </p>
+            </div>
+          )}
+        </section>
       )}
 
       <div className="editor-body">
@@ -860,6 +1087,16 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
           </section>
         </main>
       </div>
+      {activeRoomId && activeProblemId && (
+        <div className="editor-results">
+          <ResponseArea submission={shownSubmission} />
+          <SubmissionTimeline
+            submissions={timeline.submissions}
+            selectedId={shownSubmission?.id}
+            onSelect={setShownSubmission}
+          />
+        </div>
+      )}
     </div>
   );
 }
