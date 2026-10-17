@@ -5,6 +5,8 @@ import {
   useRef,
   useState,
 } from 'react';
+import Prism from 'prismjs';
+import 'prismjs/components/prism-python.js';
 import { useSearchParams } from '../../router.jsx';
 import FileTree from '../FileTree/FileTree.jsx';
 import ResponseArea from '../ResponseArea/ResponseArea.jsx';
@@ -50,6 +52,15 @@ function getSubmissionSummary(result) {
   if (!result.success) return `Submission failed: ${result.error}`;
   const { passedTests, totalTests } = result.evaluation;
   return `Submission graded: ${passedTests}/${totalTests} tests passed. See the report below.`;
+}
+
+// Turns code into HTML with <span class="token ..."> around keywords, strings,
+// comments and so on (Prism's Python grammar). Prism escapes the text itself,
+// so the result is safe to insert as HTML. The trailing newline gives the
+// highlighted copy the same final empty line the textarea shows.
+function highlightPython(code) {
+  return `${Prism.highlight(code, Prism.languages.python, 'python')}
+`;
 }
 
 // What to tell the user while the code is read-only
@@ -212,6 +223,7 @@ export default function CodeEditor({ roomId, wsUrl }) {
   // Refs hold values that message handlers need to read the *latest* value of
   // without being re-created (or triggering renders) on every change.
   const textareaRef = useRef(null);
+  const highlightRef = useRef(null);
   const socketRef = useRef(null);
   const activePathRef = useRef(activeFilePath);
   // filePath -> { text, pending } (see above)
@@ -732,6 +744,14 @@ export default function CodeEditor({ roomId, wsUrl }) {
     [sendWsMessage]
   );
 
+  // The highlighted copy sits behind the textarea; keep it scrolled to match
+  const handleScroll = (event) => {
+    const highlight = highlightRef.current;
+    if (!highlight) return;
+    highlight.scrollTop = event.target.scrollTop;
+    highlight.scrollLeft = event.target.scrollLeft;
+  };
+
   // Python-friendly editing behaviour: Tab inserts 4 spaces, Backspace removes
   // a whole indent level, and Enter keeps (or adds/removes) indentation.
   const handleKeyDown = (event) => {
@@ -1040,18 +1060,31 @@ export default function CodeEditor({ roomId, wsUrl }) {
 
         <main className="editor-workspace">
           <div className="active-tab">{activeFilePath || 'No file open'}</div>
-          <textarea
-            ref={textareaRef}
-            value={code}
-            onChange={handleInput}
-            onKeyDown={handleKeyDown}
-            placeholder="Write Python code here..."
-            spellCheck={false}
-            className="code-input"
-            aria-label={`Python source code in ${activeFilePath}`}
-            disabled={!isReady || isFileLoading}
-            readOnly={!isEditable}
-          />
+          {/* Syntax highlighting: a coloured copy of the code is drawn in a
+              <pre> behind a textarea whose own text is transparent, so typing,
+              selection and the caret all still come from the real textarea */}
+          <div className="code-editor-area">
+            <pre
+              ref={highlightRef}
+              className="code-highlight"
+              aria-hidden="true"
+              dangerouslySetInnerHTML={{ __html: highlightPython(code) }}
+            />
+            <textarea
+              ref={textareaRef}
+              value={code}
+              onChange={handleInput}
+              onKeyDown={handleKeyDown}
+              onScroll={handleScroll}
+              placeholder="Write Python code here..."
+              spellCheck={false}
+              wrap="off"
+              className="code-input"
+              aria-label={`Python source code in ${activeFilePath}`}
+              disabled={!isReady || isFileLoading}
+              readOnly={!isEditable}
+            />
+          </div>
           <section className="terminal-panel" aria-label="Execution output">
             <div className="terminal-header">Python output</div>
             <pre className="terminal-content" role="status">
