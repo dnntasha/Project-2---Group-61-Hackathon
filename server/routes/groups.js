@@ -15,7 +15,8 @@ import {
   requireNotStarted,
 } from '../middleware/groups.js';
 import { getEndsAt, getEventStatus } from '../lib/eventTime.js';
-import { notifyInvitesChanged } from '../lib/notifier.js';
+import { notifyGroup, notifyInvitesChanged } from '../lib/notifier.js';
+import { createStarterCodebases } from '../lib/codebases.js';
 import { hasImageSignature } from '../lib/imageSignature.js';
 
 // Icons are saved in server/uploads/icons and served at /api/uploads/icons.
@@ -618,6 +619,12 @@ router.post(
       },
     });
 
+    const untested = await prisma.problem.findFirst({
+      where: { groupId: req.group.id, testCases: { none: {} } },
+      orderBy: { orderIndex: 'asc' },
+      select: { title: true },
+    });
+
     if (problemCount === 0) {
       return res.status(409).json({
         error: 'Add at least one problem before starting the event.',
@@ -630,18 +637,30 @@ router.post(
       });
     }
 
-    const { count } = await prisma.group.updateMany({
-      where: {
-        id: req.group.id,
-        startedAt: null,
-      },
+    if (untested) {
+      return res.status(409).json({
+        error: `"${untested.title}" has no test cases yet. Add at least one before starting.`,
+      });
+    }
 
-      data: {
-        startedAt: new Date(),
-      },
+    const started = await prisma.$transaction(async (tx) => {
+      const { count } = await tx.group.updateMany({
+        where: {
+          id: req.group.id,
+          startedAt: null,
+        },
+
+        data: {
+          startedAt: new Date(),
+        },
+      });
+
+      if (count === 0) return false;
+      await createStarterCodebases(tx, req.group.id);
+      return true;
     });
 
-    if (count === 0) {
+    if (!started) {
       return res.status(409).json({
         error: 'The event has already started.',
       });
@@ -652,6 +671,8 @@ router.post(
         id: req.group.id,
       },
     });
+
+    notifyGroup(group.id, { type: 'GROUP_CHANGED' });
 
     return res.json({
       group: toClient(group, true),

@@ -91,6 +91,8 @@ export async function processSubmission({
       submissionId,
       scoreP: evaluation.passPercentage,
       scoreT: evaluation.totalPassedRuntimeMs,
+      results: evaluation.results,
+      reason: evaluation.reason,
     });
 
     if (!completion.success) {
@@ -101,6 +103,8 @@ export async function processSubmission({
       success: true,
       status: 200,
       submissionId,
+      problemId,
+      createdAt: new Date(),
       submissionStatus: 'COMPLETED',
       evaluation,
       score: {

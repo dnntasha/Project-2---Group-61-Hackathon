@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
+//import { useState } from 'react';
+import { Routes, Route, Navigate, Outlet, useSearchParams } from './router.jsx';
 
 import LoginPage from './pages/LoginPage.jsx';
 import { AuthProvider, useAuth } from './auth/AuthContext.jsx';
@@ -15,7 +15,9 @@ import './App.css';
 
 // Main authenticated dashboard: the user's groups, or one group's page.
 function DashboardLayout() {
-  const [groupId, setGroupId] = useState(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const groupId = Number(searchParams.get('group')) || null;
+  const setGroupId = (id) => setSearchParams(id ? { group: id } : {});
 
   return (
     <main className="app-shell">

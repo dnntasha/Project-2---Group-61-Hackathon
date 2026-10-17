@@ -57,13 +57,15 @@ import { failInterruptedSubmissions } from './submission/submissionResults.js';
 import { runPython } from './lib/pythonRunner.js';
 import { applyOp, isValidOp, transform } from './lib/textOp.js';
 import { loadRoom, saveRoom } from './lib/roomStore.js';
-import { register, unregister } from './lib/notifier.js';
+import { notifyGroup, register, unregister } from './lib/notifier.js';
 import invitesRoutes from './routes/invites.js';
+import submissionRoutes from './routes/submissions.js';
+import { MAIN_STUB, starterTree } from './lib/codebases.js';
 
 // The file-tree rules live next to the client's tree UI so both sides share them.
 import {
   applyTreeOperation,
-  createFileNode,
+  // createFileNode,
   getFilePathsById,
 } from '../client/src/components/FileTree/fileTreeUtils.js';
 import groupRoutes, { ICON_DIR } from './routes/groups.js';
@@ -82,12 +84,12 @@ if (!process.env.JWT_SECRET) {
 }
 
 // Starter contents of main.py in a newly created room
-const defaultCode = `def main():
-    print("Hello, Hackathon!")
+// const defaultCode = `def main():
+//     print("Hello, Hackathon!")
 
-if __name__ == "__main__":
-    main()
-`;
+// if __name__ == "__main__":
+//     main()
+// `;
 
 // roomId -> { clients: Set<WebSocket>, tree, files: Map<filePath, file> }
 //  - tree is the room's shared folder structure (see client fileTreeUtils.js);
@@ -182,7 +184,9 @@ app.get('/api/my-teams', requireAuth, async (req, res) => {
         id: true,
         name: true,
         groupId: true,
-        group: { select: { name: true } },
+        leaderId: true,
+        activeProblemId: true,
+        group: { select: { name: true, startedAt: true, durationMin: true } },
       },
       orderBy: { id: 'asc' },
     });
@@ -199,6 +203,7 @@ app.get('/api/my-teams', requireAuth, async (req, res) => {
 // the groups router (and its auth check) first.
 app.use('/api/groups/:groupId/problems', problemRoutes);
 app.use('/api/groups', groupRoutes);
+app.use('/api/teams/:teamId/submissions', submissionRoutes);
 app.use('/api/teams', teamRoutes);
 app.use('/api/invites', invitesRoutes);
 app.use('/api/leaderboards', leaderboardRoutes);
@@ -301,13 +306,41 @@ app.post('/api/submit', requireAuth, submitLimiter, async (req, res) => {
     });
   }
 
+  const room = rooms.get(`team-${teamId}`);
   try {
     const result = await processSubmission({
       userId: req.user.id,
       teamId,
       problemId,
-      loadCodebase: () => getTeamCodebase(teamId),
+      loadCodebase: () => {
+        if (room) {
+          broadcastToRoom(room, null, {
+            type: 'SUBMISSION_STARTED',
+            problemId,
+            username: req.user.username,
+          });
+        }
+        return getTeamCodebase(teamId, problemId);
+      },
     });
+
+    // Attempted submissions go to the whole room; refusals only to the sender
+    if (room && result.submissionId) {
+      broadcastToRoom(room, null, {
+        type: 'SUBMISSION_RESULT',
+        problemId,
+        result,
+      });
+    }
+
+    // A graded submission can change the leaderboards
+    if (result.success) {
+      const team = await prisma.team.findUnique({
+        where: { id: teamId },
+        select: { groupId: true },
+      });
+      if (team) notifyGroup(team.groupId, { type: 'LEADERBOARD_CHANGED' });
+    }
 
     return res.status(result.status).json(result);
   } catch (error) {
@@ -413,20 +446,16 @@ function newFile(code) {
 // The room a team starts with when nothing has been saved yet
 function defaultRoomState() {
   return {
-    tree: {
-      id: 'root',
-      name: 'Code',
-      type: 'directory',
-      children: [createFileNode('main.py')],
-    },
-    files: new Map([['main.py', newFile(defaultCode)]]),
+    tree: starterTree(),
+    files: new Map([['main.py', newFile(MAIN_STUB)]]),
   };
 }
 
 // Builds a room's { tree, files } from what the database has saved, or the
 // default starter room if nothing is saved.
-async function loadRoomState(teamId) {
-  const saved = await loadRoom(teamId);
+async function loadRoomState(teamId, problemId) {
+  if (problemId == null) return defaultRoomState();
+  const saved = await loadRoom(teamId, problemId);
   if (!saved) return defaultRoomState();
 
   const files = new Map(
@@ -450,17 +479,19 @@ const roomsLoading = new Map();
 
 // Returns the room with this ID, loading it from the database (or creating the
 // default one) the first time it is needed. Async because of the database read.
-async function getRoom(roomId, teamId, group) {
+async function getRoom(roomId, teamId, group, problemId) {
   const existing = rooms.get(roomId);
   if (existing) return existing;
 
   let loading = roomsLoading.get(roomId);
   if (!loading) {
-    loading = loadRoomState(teamId)
+    loading = loadRoomState(teamId, problemId)
       .then((state) => {
         const room = {
           clients: new Set(),
           teamId,
+          problemId,
+          switching: false, // true while the roomswaps to another problem
           // The group's event timing ({ id, startedAt, durationMin }). Only a
           // group that has not started needs re-reading, see getRoomEventStatus
           group,
@@ -492,15 +523,18 @@ function saveRoomNow(room) {
   room.saveTimer = null;
   if (!room.dirty) return room.saving;
   room.dirty = false;
+  //before the event starts there is no codebase to save info
+  if (room.problemId == null) return room.saving;
 
   // Snapshot the state synchronously, before any later edit can change it
   const tree = room.tree;
+  const problemId = room.problemId;
   const files = Object.fromEntries(
     [...room.files].map(([filePath, file]) => [filePath, file.code])
   );
 
   room.saving = room.saving.then(() =>
-    saveRoom(room.teamId, tree, files).catch((error) => {
+    saveRoom(room.teamId, problemId, tree, files).catch((error) => {
       // P2025 / P2003: the team was deleted (e.g. its last member left), so
       // there is nothing to save to any more
       if (error.code === 'P2025' || error.code === 'P2003') return;
@@ -562,6 +596,10 @@ async function broadcastEventStatusChanges() {
       const status = await getRoomEventStatus(room);
       if (status !== room.eventStatus) {
         room.eventStatus = status;
+        //The event started: team's codebase of its first problem
+        if (room.problemId == null && status !== EVENT_STATUS.NOT_STARTED) {
+          await openActiveProblem(room);
+        }
         broadcastToRoom(room, null, eventStatusMessage(room, status));
       }
     } catch (error) {
@@ -612,9 +650,106 @@ async function sweepSockets() {
 
 // The team's saved work as a codebase tree for grading: the live room if
 // someone has it open, otherwise what the database holds
-async function getTeamCodebase(teamId) {
-  const room = rooms.get(`team-${teamId}`) ?? (await loadRoomState(teamId));
+async function getTeamCodebase(teamId, problemId) {
+  const open = rooms.get(`team-${teamId}`);
+  const room =
+    open && open.problemId === problemId
+      ? open
+      : await loadRoomState(teamId, problemId);
   return roomToCodebase(room.tree, room.files);
+}
+
+// Leader's choice, else the first problem; null before the event starts
+async function resolveActiveProblemId(teamId) {
+  const team = await prisma.team.findUnique({
+    where: { id: teamId },
+    select: {
+      activeProblemId: true,
+      groupId: true,
+      group: { select: { startedAt: true, durationMin: true } },
+    },
+  });
+  if (!team || getEventStatus(team.group) === EVENT_STATUS.NOT_STARTED)
+    return null;
+  if (team.activeProblemId) return team.activeProblemId;
+  const first = await prisma.problem.findFirst({
+    where: { groupId: team.groupId },
+    orderBy: { orderIndex: 'asc' },
+    select: { id: true },
+  });
+  return first?.id ?? null;
+}
+
+// Save the current codebase, load another problem's, send it to every member
+async function showProblem(room, problemId) {
+  room.switching = true;
+  try {
+    await room.saving; // earlier saves first
+    const next = await loadRoomState(room.teamId, problemId);
+    await prisma.team.update({
+      where: { id: room.teamId },
+      data: { activeProblemId: problemId },
+    });
+    // synchronous from here: no edit can land between "save old" and "show new"
+    const flushed = saveRoomNow(room);
+    clearTimeout(room.saveTimer);
+    room.saveTimer = null;
+    room.dirty = false;
+    room.problemId = problemId;
+    room.tree = next.tree;
+    room.files = next.files;
+    for (const client of room.clients) sendSnapshot(client, room);
+    await flushed;
+  } finally {
+    room.switching = false;
+  }
+}
+
+async function openActiveProblem(room) {
+  const problemId = await resolveActiveProblemId(room.teamId);
+  if (problemId != null && room.problemId == null)
+    await showProblem(room, problemId);
+}
+
+// Edits typed into the old problem just before a switch are dropped
+function isStaleProblem(room, data) {
+  return data.problemId !== undefined && data.problemId !== room.problemId;
+}
+
+async function selectProblem(ws, room, problemId) {
+  if (!Number.isInteger(problemId))
+    return send(ws, { type: 'ERROR', error: 'Choose a problem.' });
+  if (problemId === room.problemId) return;
+  if (room.switching)
+    return send(ws, {
+      type: 'ERROR',
+      error: 'The problem is already being changed.',
+    });
+  const team = await prisma.team.findUnique({
+    where: { id: room.teamId },
+    select: {
+      leaderId: true,
+      groupId: true,
+      group: { select: { startedAt: true, durationMin: true } },
+    },
+  });
+  if (!team || team.leaderId !== ws.user.id)
+    return send(ws, {
+      type: 'ERROR',
+      error: 'Only the team leader can choose the problem.',
+    });
+  if (getEventStatus(team.group) === EVENT_STATUS.NOT_STARTED)
+    return send(ws, {
+      type: 'ERROR',
+      error: 'Problems can be chosen once the event has started.',
+    });
+  const problem = await prisma.problem.findUnique({
+    where: { id: problemId },
+    select: { groupId: true },
+  });
+  if (!problem || problem.groupId !== team.groupId)
+    return send(ws, { type: 'ERROR', error: 'That problem is not available.' });
+  await showProblem(room, problemId);
 }
 
 // Sends a JSON message to one client, skipping sockets that are no longer open
@@ -631,6 +766,8 @@ function sendSnapshot(ws, room) {
   );
   send(ws, {
     type: 'INIT_CODEBASE',
+    //what codebase is used for a particular problem
+    problemId: room.problemId,
     tree: room.tree,
     files,
     revisions: Object.fromEntries(
@@ -773,6 +910,8 @@ wss.on('connection', async (ws, req) => {
             // made against file revision `baseRevision`
             case 'TEXT_EDIT': {
               const { filePath, op, baseRevision } = data;
+              //Typed into the previous problem's codebase
+              if (isStaleProblem(room, data)) return;
               if (
                 !isValidFilePath(filePath) ||
                 !isValidOp(op) ||
@@ -859,6 +998,7 @@ wss.on('connection', async (ws, req) => {
             // match, and sends the new tree to everyone (including the sender,
             // who waits for it rather than updating optimistically).
             case 'TREE_OPERATION': {
+              if (isStaleProblem(room, data)) return;
               const result = applyTreeOperation(room.tree, data.operation);
               if (result.error) {
                 send(ws, { type: 'ERROR', error: result.error });
@@ -958,7 +1098,10 @@ wss.on('connection', async (ws, req) => {
                 });
               break;
             }
-
+            //the leader picks the problem the team will do
+            case 'SELECT_PROBLEM':
+              await selectProblem(ws, room, data.problemId);
+              break;
             // Placeholder until grading is implemented
             case 'SUBMIT_SOLUTION':
               send(ws, {
@@ -1045,7 +1188,8 @@ wss.on('connection', async (ws, req) => {
     ws.teamId = teamId;
     ws.authCheckedAt = Date.now();
     // Loads the team's saved files from the database on first use
-    const loadedRoom = await getRoom(roomId, teamId, team.group);
+    const problemId = await resolveActiveProblemId(teamId);
+    const loadedRoom = await getRoom(roomId, teamId, team.group, problemId);
     // The client may have disconnected during the database read; its close
     // handler already ran (with no room), so don't add a dead socket now
     if (ws.readyState !== WebSocket.OPEN) {

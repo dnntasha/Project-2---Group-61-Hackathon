@@ -19,16 +19,18 @@ import { prisma } from './prisma.js';
  * Returns null when nothing has been saved yet (a brand new team) or the team
  * no longer exists, so the caller can fall back to the default starter file.
  */
-export async function loadRoom(teamId) {
-  const team = await prisma.team.findUnique({
-    where: { id: teamId },
+export async function loadRoom(teamId, problemId) {
+  const codebase = await prisma.codebase.findUnique({
+    where: { teamId_problemId: { teamId, problemId } },
     // `include` joins the related TeamFile rows into the result
     include: { files: true },
   });
-  if (!team || !team.fileTree) return null;
+  if (!codebase) return null;
 
-  const files = Object.fromEntries(team.files.map((f) => [f.path, f.content]));
-  return { fileTree: JSON.parse(team.fileTree), files };
+  const files = Object.fromEntries(
+    codebase.files.map((f) => [f.path, f.content])
+  );
+  return { fileTree: JSON.parse(codebase.fileTree), files };
 }
 
 /**
@@ -42,23 +44,29 @@ export async function loadRoom(teamId) {
  *     `teamId_path` is the compound unique key declared on TeamFile)
  *  3. delete rows for files that were deleted or renamed away
  */
-export async function saveRoom(teamId, fileTree, files) {
+export async function saveRoom(teamId, problemId, fileTree, files) {
   const paths = Object.keys(files);
+  const tree = JSON.stringify(fileTree);
+  const { id: codebaseId } = await prisma.codebase.upsert({
+    where: { teamId_problemId: { teamId, problemId } },
+    update: {},
+    create: { teamId, problemId, fileTree: tree },
+  });
   await prisma.$transaction([
-    prisma.team.update({
-      where: { id: teamId },
-      data: { fileTree: JSON.stringify(fileTree) },
+    prisma.codebase.update({
+      where: { id: codebaseId },
+      data: { fileTree: tree },
     }),
     ...paths.map((path) =>
-      prisma.teamFile.upsert({
-        where: { teamId_path: { teamId, path } },
+      prisma.codebaseFile.upsert({
+        where: { codebaseId_path: { codebaseId, path } },
         update: { content: files[path] },
-        create: { teamId, path, content: files[path] },
+        create: { codebaseId, path, content: files[path] },
       })
     ),
-    prisma.teamFile.deleteMany({
+    prisma.codebaseFile.deleteMany({
       // notIn: [] matches every row, which is right when the room has no files
-      where: { teamId, path: { notIn: paths } },
+      where: { codebaseId, path: { notIn: paths } },
     }),
   ]);
 }
