@@ -1000,6 +1000,7 @@ export default function CodeEditor({ roomId, wsUrl }) {
             <label htmlFor="editor-problem-select">Problem: </label>
             <select
               id="editor-problem-select"
+              className="editor-team-select"
               value={activeProblemId ?? ''}
               onChange={handleSelectProblem}
               disabled={!isLeader || !isConnected || problems.length === 0}
@@ -1021,24 +1022,30 @@ export default function CodeEditor({ roomId, wsUrl }) {
           </div>
 
           {activeProblem && (
-            <details className="editor-problem-details" open>
-              <summary>{activeProblem.title}</summary>
+            <div className="editor-problem-details">
+              <h2 className="editor-problem-title">{activeProblem.title}</h2>
               <p className="editor-problem-text">{activeProblem.description}</p>
-              {activeProblem.inputFormat && (
-                <p className="editor-problem-text">
-                  <strong>Input:</strong> {activeProblem.inputFormat}
-                </p>
-              )}
-              {activeProblem.outputFormat && (
-                <p className="editor-problem-text">
-                  <strong>Output:</strong> {activeProblem.outputFormat}
-                </p>
+              {(activeProblem.inputFormat || activeProblem.outputFormat) && (
+                <dl className="editor-problem-formats">
+                  {activeProblem.inputFormat && (
+                    <div>
+                      <dt>Input</dt>
+                      <dd>{activeProblem.inputFormat}</dd>
+                    </div>
+                  )}
+                  {activeProblem.outputFormat && (
+                    <div>
+                      <dt>Output</dt>
+                      <dd>{activeProblem.outputFormat}</dd>
+                    </div>
+                  )}
+                </dl>
               )}
               <p className="editor-hint">
                 Your main.py is run and its main() function is called. Read
                 input with input() and print the answer.
               </p>
-            </details>
+            </div>
           )}
         </section>
       )}

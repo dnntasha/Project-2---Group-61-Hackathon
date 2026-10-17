@@ -30,14 +30,16 @@ export default function SubmissionTimeline({
   return (
     <section className="submission-timeline">
       <div className="timeline-heading">
-        <div>
+        <div className="timeline-title">
           <h2>Submission Timeline</h2>
-          <p>Previous submissions for this problem</p>
+          <span
+            className="submission-count"
+            aria-label={`${submissions.length} submission${submissions.length === 1 ? '' : 's'}`}
+          >
+            {submissions.length}
+          </span>
         </div>
-
-        <span className="submission-count">
-          {submissions.length} submission{submissions.length === 1 ? '' : 's'}
-        </span>
+        <p>Previous submissions for this problem</p>
       </div>
 
       {submissions.length === 0 ? (
@@ -58,6 +60,12 @@ export default function SubmissionTimeline({
                   : passed
                     ? 'Accepted'
                     : 'Failed';
+            const statusClass =
+              submission.status === 'PENDING' || submission.status === 'FAILED'
+                ? 'timeline-status-neutral'
+                : passed
+                  ? 'timeline-status-passed'
+                  : 'timeline-status-failed';
 
             const passedTests =
               submission.passedTests ?? submission.evaluation?.passedTests ?? 0;
@@ -93,7 +101,9 @@ export default function SubmissionTimeline({
                       </span>
                     </div>
 
-                    <span className="timeline-status">{statusText}</span>
+                    <span className={`timeline-status ${statusClass}`}>
+                      {statusText}
+                    </span>
                   </div>
 
                   <div className="timeline-stats">
