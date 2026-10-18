@@ -194,3 +194,9 @@ The scripts in `server/submission/test*.js` are manual checks that write to the 
 - Claude was used to audit the codebase after merging and to fix integration issues (team routes, editor rooms, WebSocket safety, Docker sandbox, submission checks, duplicate UI) and to rewrite this README's setup instructions
 - Generative AI was used to help address integration issues and bugfixes
 - Generative AI was used for assistance with styling
+- ChatGPT was used for assistance with refining and debugging parts of the leaderboard implementation, including ranking logic, final score calculation and frontend integration.
+- ChatGPT was used to help test leaderboard behaviour across multiple groups, teams, problems and tie cases.
+- ChatGPT was used for assistance with debugging Git/GitLab integration issues and resolving merge/rebase workflow problems during development.
+- ChatGPT was used to help refine the database report and ER diagram based on the final Prisma schema.
+- ChatGPT was used to assist with refining the leaderboard UI and integrating it with the existing group-specific backend routes.
+- ChatGPT was used to help with leaderboard loading, empty/error states and switching between final and problem-specific views.
