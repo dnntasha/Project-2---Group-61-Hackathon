@@ -14,9 +14,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: clientPort,
-    // Serve the client plus the one server module it shares (text
-    // operations), rather than the whole repository (incl. the database)
-    fs: { allow: ['.', '../server/lib/textOp.js'] },
+    // Only the client folder is served. (It used to also allow the shared
+    // server/lib/textOp.js; that module was removed with operational transform.)
+    fs: { allow: ['.'] },
     proxy: {
       '/api': {
         target: `http://localhost:${apiPort}`,

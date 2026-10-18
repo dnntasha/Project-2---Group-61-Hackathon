@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import './ProblemsPanel.css';
 
@@ -168,6 +168,10 @@ function ProblemCard({
 }) {
   const [error, setError] = useState('');
   const [open, setOpen] = useState(false);
+  // True while the edit form is showing in place of the problem's details
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const formRef = useRef(null);
 
   // Test cases are never shown by default: collapsing the problem hides them,
   // so the next time it is expanded they start hidden again
@@ -184,6 +188,58 @@ function ProblemCard({
   }
 
   const base = `/groups/${groupId}/problems/${problem.id}`;
+
+  // Sends the edit form's fields with PATCH (the server only allows this
+  // before the event starts). Skips the request when nothing changed.
+  async function saveForm(formEl) {
+    const form = new FormData(formEl);
+    const fields = {
+      title: form.get('title'),
+      description: form.get('description'),
+      inputFormat: form.get('inputFormat'),
+      outputFormat: form.get('outputFormat'),
+      submissionLimit: Number(form.get('submissionLimit') || 0),
+    };
+    const unchanged = Object.keys(fields).every(
+      (key) => fields[key] === problem[key]
+    );
+    if (unchanged) return;
+    await api(base, { method: 'PATCH', body: fields });
+    await onChanged();
+  }
+
+  // "Save changes" button: save, then close the form (the card stays open)
+  async function saveEdit(e) {
+    e.preventDefault();
+    setError('');
+    setSaving(true);
+    try {
+      await saveForm(e.target);
+      setEditing(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Collapsing a problem that is being edited (by clicking its title, or by
+  // opening another problem) saves the edits instead of throwing them away.
+  // The form is still mounted while the card slides shut, so it can be read.
+  useEffect(() => {
+    if (expanded || !editing) return;
+    const formEl = formRef.current;
+    setEditing(false);
+    if (!formEl) return;
+    if (!formEl.checkValidity()) {
+      setError('Changes were not saved: a title and description are required.');
+      return;
+    }
+    saveForm(formEl).catch((err) =>
+      setError(`Changes were not saved: ${err.message}`)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded]);
 
   return (
     <li className="problem-card">
@@ -226,6 +282,23 @@ function ProblemCard({
               ↓
             </button>
             <button
+              className="problem-pill"
+              type="button"
+              onClick={() => {
+                setError('');
+                if (editing) {
+                  setEditing(false); // Cancel: discard the edits
+                } else {
+                  setEditing(true);
+                  // Editing opens the problem like clicking its title does,
+                  // which collapses whichever other problem was open
+                  if (!expanded) onToggle();
+                }
+              }}
+            >
+              {editing ? 'Cancel' : 'Edit'}
+            </button>
+            <button
               className="problem-pill danger"
               onClick={() => {
                 if (
@@ -244,58 +317,116 @@ function ProblemCard({
       </div>
 
       <Collapsible open={expanded}>
-        <div className="problem-body">
-          <section className="problem-section">
-            <h4 className="problem-label">Description</h4>
-            <p className="problem-desc">{problem.description}</p>
-          </section>
-
-          {(problem.inputFormat || problem.outputFormat) && (
-            <dl className="problem-formats problem-section">
-              {problem.inputFormat && (
-                <div>
-                  <dt>Input (stdin)</dt>
-                  <dd>{problem.inputFormat}</dd>
-                </div>
-              )}
-              {problem.outputFormat && (
-                <div>
-                  <dt>Output (stdout)</dt>
-                  <dd>{problem.outputFormat}</dd>
-                </div>
-              )}
-            </dl>
-          )}
-
-          <div className="problem-footer">
-            <span className="problem-limit">
-              {problem.submissionLimit > 0
-                ? `Up to ${problem.submissionLimit} submissions per team`
-                : 'Unlimited submissions'}
-            </span>
-
-            <button
-              type="button"
-              className="problem-pill"
-              onClick={() => setOpen(!open)}
-            >
-              {open ? 'Hide' : 'Show'} test cases ({problem.testCases.length}
-              {problem.hiddenTestCount > 0
-                ? ` + ${problem.hiddenTestCount} hidden`
-                : ''}
-              )
+        {canEdit && editing ? (
+          <form
+            ref={formRef}
+            className="problem-add problem-edit"
+            onSubmit={saveEdit}
+          >
+            <label>
+              Title
+              <input
+                name="title"
+                required
+                maxLength={100}
+                defaultValue={problem.title}
+              />
+            </label>
+            <label>
+              Description
+              <textarea
+                name="description"
+                required
+                rows={3}
+                defaultValue={problem.description}
+              />
+            </label>
+            <div className="settings-grid">
+              <label>
+                Input format (stdin)
+                <textarea
+                  name="inputFormat"
+                  rows={2}
+                  defaultValue={problem.inputFormat}
+                />
+              </label>
+              <label>
+                Output format (stdout)
+                <textarea
+                  name="outputFormat"
+                  rows={2}
+                  defaultValue={problem.outputFormat}
+                />
+              </label>
+            </div>
+            <label className="narrow">
+              Submission limit per team (0 = unlimited)
+              <input
+                name="submissionLimit"
+                type="number"
+                min={0}
+                max={1000}
+                defaultValue={problem.submissionLimit}
+              />
+            </label>
+            <button className="btn-primary" type="submit" disabled={saving}>
+              {saving ? 'Saving…' : 'Save changes'}
             </button>
-          </div>
+          </form>
+        ) : (
+          <div className="problem-body">
+            <section className="problem-section">
+              <h4 className="problem-label">Description</h4>
+              <p className="problem-desc">{problem.description}</p>
+            </section>
 
-          <Collapsible open={open}>
-            <TestCases
-              problem={problem}
-              groupId={groupId}
-              canEdit={canEdit}
-              onChanged={onChanged}
-            />
-          </Collapsible>
-        </div>
+            {(problem.inputFormat || problem.outputFormat) && (
+              <dl className="problem-formats problem-section">
+                {problem.inputFormat && (
+                  <div>
+                    <dt>Input (stdin)</dt>
+                    <dd>{problem.inputFormat}</dd>
+                  </div>
+                )}
+                {problem.outputFormat && (
+                  <div>
+                    <dt>Output (stdout)</dt>
+                    <dd>{problem.outputFormat}</dd>
+                  </div>
+                )}
+              </dl>
+            )}
+
+            <div className="problem-footer">
+              <span className="problem-limit">
+                {problem.submissionLimit > 0
+                  ? `Up to ${problem.submissionLimit} submissions per team`
+                  : 'Unlimited submissions'}
+              </span>
+
+              <button
+                type="button"
+                className="problem-pill"
+                onClick={() => setOpen(!open)}
+              >
+                {open ? 'Hide' : 'Show'} test cases ({problem.testCases.length}
+                {problem.hiddenTestCount > 0
+                  ? ` + ${problem.hiddenTestCount} hidden`
+                  : ''}
+                )
+              </button>
+            </div>
+
+            <Collapsible open={open}>
+              <TestCases
+                problem={problem}
+                groupId={groupId}
+                canEdit={canEdit}
+                onChanged={onChanged}
+              />
+            </Collapsible>
+          </div>
+        )}
       </Collapsible>
 
       {error && (
