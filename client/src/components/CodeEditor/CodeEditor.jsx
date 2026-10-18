@@ -15,6 +15,8 @@ import { api, getToken } from '../../api.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { getFilePathsById } from '../FileTree/fileTreeUtils.js';
 import { INDENT, nextLineIndentation, shiftLines } from './indentation.js';
+import { mergeText } from '../../../../server/lib/textMerge.js';
+import { mapSelection } from './caretPosition.js';
 import './CodeEditor.css';
 
 // The file that is open when the editor first loads
@@ -321,15 +323,18 @@ export default function CodeEditor({ roomId, wsUrl }) {
   const flushFile = useCallback(
     (filePath) => {
       const file = filesRef.current.get(filePath);
-      if (!file) return;
+      if (!file || file.mergeRejected) return;
       if (
         sendWsMessage({
           type: 'TEXT_EDIT',
           problemId: problemIdRef.current,
           filePath,
           code: file.text,
+          baseCode: file.serverText,
         })
       ) {
+        file.sent ??= [];
+        file.sent.push(file.text);
         file.pending += 1;
       }
     },
@@ -339,7 +344,7 @@ export default function CodeEditor({ roomId, wsUrl }) {
   // Replaces our whole record of a file with the server's version, and shows
   // it if it is the active file
   const resetFile = useCallback((filePath, text) => {
-    filesRef.current.set(filePath, { text, pending: 0 });
+    filesRef.current.set(filePath, { text, serverText: text, pending: 0, sent: [] });
     if (filePath === activePathRef.current) {
       pendingSelectionRef.current = null;
       setCode(text);
@@ -361,7 +366,13 @@ export default function CodeEditor({ roomId, wsUrl }) {
       // We have a write the server has not acknowledged yet. The server handled
       // this remote write first and ours after it, so ours is the winner and
       // the remote text is already out of date. Ignore it (see the component comment).
-      if (file.pending > 0) return;
+      const previousServerText = file.serverText ?? file.text;
+      const mergedText = mergeText(
+        previousServerText,
+        message.code,
+        file.text
+      );
+      file.serverText = message.code;
 
       const isActive = message.filePath === activePathRef.current;
       const textarea = textareaRef.current;
@@ -369,12 +380,14 @@ export default function CodeEditor({ roomId, wsUrl }) {
       const selection =
         isActive && textarea
           ? {
-              start: Math.min(textarea.selectionStart, message.code.length),
-              end: Math.min(textarea.selectionEnd, message.code.length),
+              ...mapSelection(file.text, mergedText, {
+                start: textarea.selectionStart,
+                end: textarea.selectionEnd,
+              }),
             }
           : null;
 
-      file.text = message.code;
+      file.text = mergedText;
       if (isActive) {
         pendingSelectionRef.current = selection;
         setCode(file.text);
@@ -433,7 +446,13 @@ export default function CodeEditor({ roomId, wsUrl }) {
         // after the loop, send the current text again to the new path.
         const hadPending = file.pending > 0;
         file.pending = 0;
-        if (hadPending) resend.push(newPath);
+        file.sent = [];
+
+        // A rejected edit must remain available for manual recovery,
+        // not be silently retried after a rename or move.
+        if (hadPending && !file.mergeRejected) {
+          resend.push(newPath);
+        }
         carried.set(newPath, file);
       }
       filesRef.current = carried;
@@ -466,9 +485,13 @@ export default function CodeEditor({ roomId, wsUrl }) {
           setActiveProblemId(message.problemId ?? null);
           // After a reconnect, anything typed that never reached the server is
           // replaced by the team's version; say so rather than lose it quietly
-          const unsynced = [...filesRef.current.values()].filter(
-            (file) => file.pending > 0
+          const previousFiles = filesRef.current;
+          const unsynced = [...previousFiles.values()].filter(
+            (file) => file.pending > 0 && !file.mergeRejected
           ).length;
+          const rejectedFiles = [...previousFiles.entries()].filter(
+            ([, file]) => file.mergeRejected
+          );
           if (unsynced > 0 && !switchedProblem) {
             setTerminalOutput(
               `Reconnected. ${unsynced} file${unsynced === 1 ? '' : 's'} had changes that could not be sent and were reset to the team's version.`
@@ -480,6 +503,31 @@ export default function CodeEditor({ roomId, wsUrl }) {
           for (const [filePath, text] of Object.entries(message.files || {})) {
             resetFile(filePath, text);
           }
+
+          if (!switchedProblem && rejectedFiles.length > 0) {
+            let preserved = 0;
+            for (const [filePath, previous] of rejectedFiles) {
+              const current = filesRef.current.get(filePath);
+              if (!current) continue;
+
+              current.text = previous.text;
+              current.mergeRejected = true;
+              current.pending = 0;
+              current.sent = [];
+              preserved++;
+
+              if (filePath === activePathRef.current) {
+                setCode(previous.text);
+              }
+            }
+
+            if (preserved > 0) {
+              setTerminalOutput(
+                `${preserved} file${preserved === 1 ? '' : 's'} contain unsaved edits that could not be merged. Your text is preserved locally, but it has NOT been saved to the server. Copy it somewhere safe before refreshing.`
+              );
+            }
+          }
+
           // Open main.py, or whatever file is first if it was deleted
           if (!filesRef.current.has(activePathRef.current)) {
             showFile(filesRef.current.keys().next().value ?? '');
@@ -494,9 +542,33 @@ export default function CodeEditor({ roomId, wsUrl }) {
 
         // Authoritative copy of one file (response to SELECT_FILE, or sent
         // when the server couldn't reconcile our edit) - overwrites local text
-        case 'FILE_SNAPSHOT':
-          resetFile(message.filePath, message.code);
+        case 'FILE_SNAPSHOT': {
+          const existing = filesRef.current.get(message.filePath);
+
+          if (existing?.mergeRejected) {
+            // Keep unsaved local work visible instead of replacing it.
+            // Store the authoritative version separately for recovery.
+            existing.serverText = message.code;
+            existing.pending = 0;
+            existing.sent = [];
+            // Keep recovery mode active until the user explicitly resolves
+            // the unsaved text. Do not silently resume automatic saves.
+            existing.mergeRejected = true;
+
+            if (message.filePath === activePathRef.current) {
+              setCode(existing.text);
+              setIsReady(true);
+              setIsFileLoading(false);
+            }
+
+            setTerminalOutput(
+              'Your latest edit could not be saved. Your unsaved text is still in the editor. Copy it somewhere safe before refreshing or switching files.'
+            );
+          } else {
+            resetFile(message.filePath, message.code);
+          }
           break;
+        }
 
         // Another user's write: the file's new full text
         case 'TEXT_EDIT':
@@ -507,7 +579,53 @@ export default function CodeEditor({ roomId, wsUrl }) {
         // the server holds exactly what we show, so remote text is accepted again
         case 'ACK': {
           const file = filesRef.current.get(message.filePath);
-          if (file) file.pending = Math.max(0, file.pending - 1);
+          if (file) {
+            const sentText = file.sent?.shift();
+            file.pending = Math.max(0, file.pending - 1);
+
+            if (typeof message.code === 'string') {
+              const mergedText = mergeText(
+                sentText ?? file.serverText ?? file.text,
+                message.code,
+                file.text
+              );
+              const isActive = message.filePath === activePathRef.current;
+              const textarea = textareaRef.current;
+              if (isActive && textarea && mergedText !== file.text) {
+                pendingSelectionRef.current = mapSelection(
+                  file.text,
+                  mergedText,
+                  {
+                    start: textarea.selectionStart,
+                    end: textarea.selectionEnd,
+                  }
+                );
+              }
+
+              file.serverText = message.code;
+              file.text = mergedText;
+
+              if (isActive) {
+                setCode(mergedText);
+              }
+
+              // Only send a follow-up if there are no outstanding writes
+              // and the merged local text differs from the server's version.
+              // A microtask rechecks the latest state before sending.
+              if (file.pending === 0 && mergedText !== message.code) {
+                queueMicrotask(() => {
+                  const latest = filesRef.current.get(message.filePath);
+                  if (
+                    latest === file &&
+                    latest.pending === 0 &&
+                    latest.text !== latest.serverText
+                  ) {
+                    flushFile(message.filePath);
+                  }
+                });
+              }
+            }
+          }
           break;
         }
 
@@ -550,10 +668,10 @@ export default function CodeEditor({ roomId, wsUrl }) {
             ? filesRef.current.get(message.filePath)
             : null;
           if (file?.pending > 0) {
-            filesRef.current.delete(message.filePath);
-            if (message.filePath === activePathRef.current) {
-              showFile(message.filePath);
-            }
+            // Do not discard local changes when the server rejects a write.
+            file.mergeRejected = true;
+            file.pending = 0;
+            file.sent = [];
           }
           break;
         }
