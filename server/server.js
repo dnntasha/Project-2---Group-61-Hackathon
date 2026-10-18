@@ -63,6 +63,7 @@ import { notifyGroup, register, unregister } from './lib/notifier.js';
 import invitesRoutes from './routes/invites.js';
 import submissionRoutes from './routes/submissions.js';
 import { MAIN_STUB, starterTree } from './lib/codebases.js';
+import { mergeText } from './lib/textMerge.js';
 
 // The file-tree rules live next to the client's tree UI so both sides share them.
 import {
@@ -155,6 +156,7 @@ function isValidFilePath(filePath) {
     filePath.length > 0 &&
     filePath.length <= 256 &&
     !filePath.includes('\\') &&
+    !/[\x00-\x1F\x7F]/.test(filePath) &&
     filePath.split('/').every((part) => part && part !== '.' && part !== '..')
   );
 }
@@ -594,12 +596,15 @@ async function broadcastEventStatusChanges() {
     if (room.clients.size === 0) continue;
     try {
       const status = await getRoomEventStatus(room);
+      // Initialize an editor opened before the event started, even if
+      // an earlier initialization attempt failed or missed the transition.
+      // Do not initialize a new problem after the event has ended.
+      if (room.problemId == null && status === EVENT_STATUS.RUNNING) {
+        await openActiveProblem(room);
+      }
+
       if (status !== room.eventStatus) {
         room.eventStatus = status;
-        //The event started: team's codebase of its first problem
-        if (room.problemId == null && status !== EVENT_STATUS.NOT_STARTED) {
-          await openActiveProblem(room);
-        }
         broadcastToRoom(room, null, eventStatusMessage(room, status));
       }
     } catch (error) {
@@ -906,7 +911,7 @@ wss.on('connection', async (ws, req) => {
             // Client reports an edit by sending the FULL new text of a file.
             // Last-write-wins: the text simply replaces what the server holds.
             case 'TEXT_EDIT': {
-              const { filePath, code } = data;
+              const { filePath, code, baseCode } = data;
               // Typed into the previous problem's codebase
               if (isStaleProblem(room, data)) return;
               // Shape check only. Any string is a valid file, including ''.
@@ -944,18 +949,48 @@ wss.on('connection', async (ws, req) => {
               // The write itself: overwrite the file with the new text. Nothing
               // is merged with what was there before, so an edit another user
               // made a moment ago is replaced by this one (last write wins).
-              file.code = code;
+              // Merge independent edits made against the client's base text.
+              // Without a base, preserve the old protocol for older clients.
+              let mergedCode;
+              try {
+                mergedCode =
+                  typeof baseCode === 'string'
+                    ? mergeText(baseCode, file.code, code)
+                    : code;
+              } catch (error) {
+                if (!(error instanceof RangeError)) throw error;
+
+                send(ws, {
+                  type: 'ERROR',
+                  filePath,
+                  error: 'This edit could not be merged safely. Please review the latest file before retrying.',
+                });
+                sendFileSnapshot(ws, filePath, file);
+                return;
+              }
+
+              if (Buffer.byteLength(mergedCode, 'utf8') > MAX_CODE_BYTES) {
+                send(ws, {
+                  type: 'ERROR',
+                  filePath,
+                  error: 'The merged file is too large.',
+                });
+                sendFileSnapshot(ws, filePath, file);
+                return;
+              }
+
+              file.code = mergedCode;
 
               // Confirm to the sender, then relay the new text to everyone else.
               // The ACK tells the sender its write has now been applied, which
               // the client uses to know when it is safe to accept other users'
               // text again (see CodeEditor.jsx).
               scheduleSave(room); // persist the new contents shortly
-              send(ws, { type: 'ACK', filePath });
+              send(ws, { type: 'ACK', filePath, code: file.code });
               broadcastToRoom(room, ws, {
                 type: 'TEXT_EDIT',
                 filePath,
-                code,
+                code: file.code,
               });
               break;
             }
