@@ -1,4 +1,5 @@
 /* Group list and group page. Uses the colour tokens from index.css. */
+
 .groups {
   width: 100%;
   max-width: 720px;
@@ -17,14 +18,22 @@
   margin: 0 0 6px;
 }
 
+.groups h3 {
+  font-size: 15px;
+  margin: 0;
+  color: var(--text-h);
+}
+
 .muted {
   color: var(--text);
 }
 
 /* ---- Forms ---- */
+
 .groups input[type='text'],
 .groups input:not([type]),
-.groups input[type='number'] {
+.groups input[type='number'],
+.groups select {
   font: inherit;
   color: var(--text-h);
   background: var(--bg);
@@ -33,7 +42,12 @@
   padding: 9px 12px;
 }
 
+.groups select {
+  min-height: 42px;
+}
+
 .groups input:focus-visible,
+.groups select:focus-visible,
 .groups button:focus-visible,
 .file-button:focus-within {
   outline: 2px solid var(--accent);
@@ -85,9 +99,15 @@
   border: 1px solid var(--border);
 }
 
-.btn-primary:disabled {
+.btn-primary:disabled,
+.btn-secondary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.btn-small {
+  padding: 7px 12px;
+  font-size: 14px;
 }
 
 .link-button {
@@ -100,21 +120,65 @@
   cursor: pointer;
 }
 
-/* ---- Create group ---- */
-.group-create {
-  margin: 20px 0 28px;
+.back-button {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: none;
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
 }
 
-.group-create label {
-  display: block;
-  font-weight: 500;
-  color: var(--text-h);
-  margin-bottom: 6px;
+.group-container {
+  margin-top: 14px;
+  padding: 24px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+}
+
+.group-container .group-heading {
+  margin-top: 0;
+}
+
+.group-container > :last-child,
+.group-container > :last-child > :last-child {
+  margin-bottom: 0;
+}
+
+@media (max-width: 560px) {
+  .group-container {
+    padding: 16px;
+  }
+}
+
+/* ---- Groups overview ---- */
+
+.groups-header {
+  margin-bottom: 24px;
+}
+
+.groups-header h1 {
+  margin: 0 0 10px;
+}
+
+.groups-header p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.group-create {
+  margin-bottom: 28px;
 }
 
 .group-create-row {
   display: flex;
   gap: 8px;
+  margin-top: 14px;
 }
 
 .group-create-row input {
@@ -122,7 +186,22 @@
   min-width: 0;
 }
 
+.groups-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.groups-list-heading h2 {
+  margin: 0;
+}
+
 /* ---- Group list ---- */
+
 .group-list {
   list-style: none;
   padding: 0;
@@ -139,16 +218,11 @@
   font: inherit;
   text-align: left;
   color: var(--text-h);
-  background: var(--bg);
+  background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 12px 14px;
   cursor: pointer;
-  transition: border-color 150ms ease;
-}
-
-.group-card:hover {
-  border-color: var(--accent);
 }
 
 .group-card-name {
@@ -162,6 +236,7 @@
 }
 
 /* ---- Group icon ---- */
+
 .group-icon {
   flex-shrink: 0;
   border-radius: 8px;
@@ -177,6 +252,7 @@
 }
 
 /* ---- Group page ---- */
+
 .group-heading {
   display: flex;
   align-items: center;
@@ -197,24 +273,251 @@
 }
 
 .panel {
+  background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 18px;
   margin-bottom: 16px;
 }
 
+/* ---- Members ---- */
+
+.teams-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.member-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.member-avatar,
+.team-avatar {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.member-avatar-small {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.member-meta {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.member-badge {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-radius: 999px;
+  padding: 5px 9px;
+}
+
+/* ---- Teams ---- */
+
+.teams-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.team-create {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.team-create > label,
+.team-member-invite > label {
+  display: grid;
+  gap: 7px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-h);
+}
+
+.team-create-row,
+.team-invite-row {
+  display: flex;
+  gap: 8px;
+}
+
+.team-create-row input,
+.team-invite-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.team-list {
+  display: grid;
+  gap: 10px;
+}
+
+.team-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--bg);
+}
+
+.team-card-current {
+  border-color: var(--accent);
+}
+
+.team-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.team-card-title {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 4px;
+}
+
+.team-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text-h);
+}
+
+.team-member-list {
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 0;
+  display: grid;
+  gap: 6px;
+}
+
+.team-member-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--accent-bg);
+}
+
+.team-member-name {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--text-h);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.team-member-invite {
+  border-top: 1px solid var(--border);
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.team-actions {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.team-locked {
+  border-top: 1px solid var(--border);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+
+.teams-empty,
+.teams-locked-message {
+  padding-top: 4px;
+}
+
+/* ---- Team invitations ---- */
+
+.team-invites {
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 0;
+}
+
+.team-invite-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.team-invite-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.team-invite-info {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.team-invite-info strong {
+  color: var(--text-h);
+}
+
+.team-invite-info span {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.team-invite-actions {
+  display: flex;
+  gap: 7px;
+}
+
+/* ---- Group icon upload ---- */
+
 .file-button {
   display: inline-block;
   margin-top: 12px;
 }
 
-/* Hide the browser's file input; the label acts as the button. */
 .file-button input {
   position: absolute;
   width: 1px;
   height: 1px;
   opacity: 0;
 }
+
+/* ---- Settings ---- */
 
 .settings-grid {
   display: grid;
@@ -254,24 +557,160 @@
   color: var(--text-h);
 }
 
-/* ---- Start the event ---- */
-.panel-start {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+.settings-list {
+  margin-top: 8px;
 }
 
-.panel-start .form-error {
-  flex-basis: 100%;
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-row-text {
+  display: grid;
+  gap: 2px;
+}
+
+.settings-row-text .form-hint {
+  margin: 0;
+}
+
+.settings-row-label {
+  font-weight: 500;
+  color: var(--text-h);
+}
+
+/* Match the team/problem selectors on the code editor page */
+.settings-row input {
+  width: 100px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  text-align: center;
+  font-size: 15px;
+  padding: 4px 10px;
+  min-height: 32px;
+  border-radius: 6px;
+}
+
+.settings-row input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.settings-list + .form-actions {
+  margin-top: 18px;
+}
+
+@media (max-width: 560px) {
+  .settings-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .settings-row input {
+    width: 100%;
+    text-align: left;
+  }
+}
+
+/* ---- Start the event ---- */
+
+.start-event {
+  display: grid;
+  justify-items: end;
+}
+
+/* ---- Group tabs ---- */
+
+.group-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 20px;
+  padding: 4px 0 16px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.group-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.group-tab {
+  font: inherit;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: normal;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.group-tab-active,
+.group-tab-active:hover {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+/* ---- Small screens ---- */
+
+@media (max-width: 560px) {
+  .team-create-row,
+  .team-invite-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .team-create-row .btn-primary,
+  .team-invite-row .btn-primary {
+    width: 100%;
+  }
+
+  .team-invite-card {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .team-invite-actions {
+    width: 100%;
+  }
+
+  .team-invite-actions button {
+    flex: 1;
+  }
+
+  .team-actions .btn-secondary {
+    width: 100%;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
   .btn-primary {
     color: #16171d;
   }
+
   .form-error {
     color: #f97066;
   }
+}
+
+/* Red dot shown left of the Admin/Member badge when a team invite is pending */
+.invite-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #e5484d;
+  flex-shrink: 0;
 }

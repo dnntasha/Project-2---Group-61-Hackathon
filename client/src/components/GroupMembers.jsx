@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import { useNotifications } from '../notifications/NotificationsContext.jsx';
 import './GroupMembers.css';
 
 // Who is in the group. The admin also gets the invite form and the list of
@@ -18,10 +19,13 @@ export default function GroupMembers({ group }) {
     }
   }
 
+  // Reload when a live invite event arrives (e.g. someone accepted or declined)
+  const { tick } = useNotifications();
+
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [group.id]);
+  }, [group.id, tick]);
 
   // Invites close once the event starts, so teams can't change mid-event.
   const canInvite = group.isAdmin && group.status === 'not-started';

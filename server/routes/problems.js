@@ -351,19 +351,23 @@ router.patch(
   requireNotStarted,
   wrap(loadProblem),
   wrap(async (req, res) => {
+    const testId = Number(req.params.testId);
+    if (!Number.isInteger(testId))
+      return res.status(404).json({ error: 'Test case not found.' });
+
     const { error, data } = validateTestCase(req.body, { partial: true });
     if (error) return res.status(400).json({ error });
 
     // problemId in the filter stops editing another problem's test.
     const { count } = await prisma.testCase.updateMany({
-      where: { id: Number(req.params.testId), problemId: req.problem.id },
+      where: { id: testId, problemId: req.problem.id },
       data,
     });
     if (count === 0)
       return res.status(404).json({ error: 'Test case not found.' });
 
     const testCase = await prisma.testCase.findUnique({
-      where: { id: Number(req.params.testId) },
+      where: { id: testId },
     });
     res.json({ testCase });
   })
@@ -377,8 +381,12 @@ router.delete(
   requireNotStarted,
   wrap(loadProblem),
   wrap(async (req, res) => {
+    const testId = Number(req.params.testId);
+    if (!Number.isInteger(testId))
+      return res.status(404).json({ error: 'Test case not found.' });
+
     const { count } = await prisma.testCase.deleteMany({
-      where: { id: Number(req.params.testId), problemId: req.problem.id },
+      where: { id: testId, problemId: req.problem.id },
     });
     if (count === 0)
       return res.status(404).json({ error: 'Test case not found.' });

@@ -1,20 +1,10 @@
-import { useState } from 'react';
-import './LoginPage.css';
+import { Link } from '../router.jsx';
+import './LandingPage.css';
 
-export default function LandingPage({ onNavigate }) {
-  const [busy, setBusy] = useState(false);
-
-  function handleGetStarted() {
-    setBusy(true);
-    // Simulate navigation or action trigger
-    setTimeout(() => {
-      setBusy(false);
-      if (onNavigate) onNavigate('login');
-    }, 300);
-  }
-
+// Signed-in home page: what the platform does and where to start.
+export default function LandingPage() {
   return (
-    <main className="landing">
+    <main className="landing page-enter">
       <div className="landing-panel">
         <p className="landing-brand">The Hackathon</p>
         <h1>Welcome to the Platform</h1>
@@ -30,33 +20,22 @@ export default function LandingPage({ onNavigate }) {
           </div>
           <div className="feature-card">
             <h3>💻 Live Code Editor</h3>
-            <p>Build solutions with browser-based code tools.</p>
+            <p>Build solutions together in a shared Python editor.</p>
           </div>
           <div className="feature-card">
             <h3>🎯 Problem Statements</h3>
-            <p>Access challenge details and submit your project.</p>
+            <p>See the challenges once your group&apos;s event starts.</p>
           </div>
         </div>
 
         <div className="landing-actions">
-          <button
-            className="landing-submit"
-            onClick={handleGetStarted}
-            disabled={busy}
-          >
-            {busy ? 'Please wait…' : 'Get Started'}
-          </button>
+          <Link className="btn-primary landing-submit" to="/dashboard">
+            Go to your groups
+          </Link>
+          <Link className="btn-secondary" to="/coding">
+            Open the editor
+          </Link>
         </div>
-
-        <p className="landing-footer">
-          Already standard user?{' '}
-          <button
-            type="button"
-            onClick={() => onNavigate && onNavigate('login')}
-          >
-            Sign in here
-          </button>
-        </p>
       </div>
     </main>
   );

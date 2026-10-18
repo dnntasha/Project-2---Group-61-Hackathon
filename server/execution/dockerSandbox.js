@@ -2,12 +2,39 @@ import { setTimeout, clearTimeout } from 'node:timers';
 import { spawn } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { randomUUID } from 'node:crypto';
+import { chmod, readdir } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 export const IMAGE = 'python:3.12-slim';
+// Every sandbox container carries this label so leftovers can be found
+export const SANDBOX_LABEL = 'cs343-sandbox';
 const DEFAULT_TIMEOUT_MS = 5000;
+// Limit per stream (stdout and stderr are capped separately)
 const MAX_OUTPUT_BYTES = 64 * 1024;
+// Extra time the docker CLI gets on top of the in-container limit, to cover
+// container start-up and attach overhead
+const DOCKER_OVERHEAD_MS = 10000;
 const DOCKER_COMMAND = 'docker';
+// coreutils `timeout` exits with this code when it had to stop the program
+const TIMEOUT_EXIT_CODE = 124;
+// Exit code and stderr marker used by the grading harness when main.py does
+// not define a callable main(); both are required so a submission that
+// merely calls sys.exit(97) is not mistaken for a missing entry point
+export const NO_MAIN_EXIT_CODE = 97;
+export const NO_MAIN_MARKER = '__CS343_NO_MAIN__';
+// Loads main.py (without triggering an `if __name__ == "__main__"` guard) and
+// calls its main() exactly once. Written as one line because it is passed to
+// `python -c` as a single argument.
+const ENTRY_POINT_HARNESS =
+  "import runpy,sys;ns=runpy.run_path('/app/main.py',run_name='submission');" +
+  `f=ns.get('main');callable(f) or (sys.stderr.write('${NO_MAIN_MARKER}'),sys.exit(${NO_MAIN_EXIT_CODE}));f()`;
+// Unprivileged "nobody" user inside the container
+const CONTAINER_USER = '65534:65534';
+// How many sandbox containers may run at once (each is capped at half a CPU)
+const MAX_CONCURRENT_RUNS =
+  Number(process.env.SANDBOX_CONCURRENCY) ||
+  Math.max(2, os.availableParallelism());
 
 function dockerCommand(args, stdin = '', timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
@@ -15,11 +42,10 @@ function dockerCommand(args, stdin = '', timeoutMs = 10000) {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    let stdout = '';
-    let stderr = '';
+    const chunks = { stdout: [], stderr: [] };
+    const sizes = { stdout: 0, stderr: 0 };
     let timedOut = false;
     let outputExceeded = false;
-    let outputBytes = 0;
     let settled = false;
 
     const timer = setTimeout(() => {
@@ -27,19 +53,19 @@ function dockerCommand(args, stdin = '', timeoutMs = 10000) {
       child.kill('SIGKILL');
     }, timeoutMs);
 
+    // Buffers are joined and decoded once at the end so multi-byte UTF-8
+    // characters split across chunks are not corrupted
     const capture = (chunk, stream) => {
-      const remaining = Math.max(0, MAX_OUTPUT_BYTES - outputBytes);
-      const kept = chunk.subarray(0, remaining);
-
-      outputBytes += kept.length;
-
-      if (stream === 'stdout') stdout += kept.toString();
-      else stderr += kept.toString();
-
-      if (chunk.length > remaining || outputBytes >= MAX_OUTPUT_BYTES) {
+      const remaining = MAX_OUTPUT_BYTES - sizes[stream];
+      if (chunk.length > remaining) {
+        chunks[stream].push(chunk.subarray(0, remaining));
+        sizes[stream] = MAX_OUTPUT_BYTES;
         outputExceeded = true;
         child.kill('SIGKILL');
+        return;
       }
+      chunks[stream].push(chunk);
+      sizes[stream] += chunk.length;
     };
 
     child.stdout.on('data', (chunk) => capture(chunk, 'stdout'));
@@ -58,8 +84,8 @@ function dockerCommand(args, stdin = '', timeoutMs = 10000) {
       if (!settled) {
         settled = true;
         resolve({
-          stdout,
-          stderr,
+          stdout: Buffer.concat(chunks.stdout).toString('utf8'),
+          stderr: Buffer.concat(chunks.stderr).toString('utf8'),
           exitCode,
           timedOut,
           outputExceeded,
@@ -72,6 +98,167 @@ function dockerCommand(args, stdin = '', timeoutMs = 10000) {
   });
 }
 
+// Simple counting semaphore so a burst of runs can't exhaust the host
+let activeRuns = 0;
+const waitingRuns = [];
+
+async function withRunSlot(task) {
+  if (activeRuns >= MAX_CONCURRENT_RUNS) {
+    await new Promise((resolve) => waitingRuns.push(resolve));
+  } else {
+    activeRuns += 1;
+  }
+  try {
+    return await task();
+  } finally {
+    const next = waitingRuns.shift();
+    // Hand the slot straight to the next waiter, or release it
+    if (next) next();
+    else activeRuns -= 1;
+  }
+}
+
+// The container runs as an unprivileged user, so the mounted project must be
+// readable by everyone (temporary directories are created as 0700)
+async function makeWorldReadable(directory) {
+  await chmod(directory, 0o755);
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) await makeWorldReadable(entryPath);
+    else await chmod(entryPath, 0o644);
+  }
+}
+
+/**
+ * Arguments shared by every sandbox container (after `docker create` or
+ * `docker run`): no network, capped memory/CPU/processes, read-only file
+ * system, no capabilities, an unprivileged user and the project mounted
+ * read-only at /app. The program is stopped by `timeout` inside the
+ * container, so container start-up time does not count against the limit.
+ * scripts/docker-check.mjs uses the same arguments.
+ *
+ * By default main.py is run as a plain script. With `callMain` it is loaded
+ * as a module and its main() entry point is called, as grading requires.
+ */
+export function sandboxArgs(
+  projectDirectory,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  { callMain = false } = {}
+) {
+  return [
+    '--label',
+    SANDBOX_LABEL,
+    // Never download an image while grading: it must already be installed
+    '--pull',
+    'never',
+    '--network',
+    'none',
+    '--memory',
+    '128m',
+    '--memory-swap',
+    '128m',
+    '--cpus',
+    '0.5',
+    '--pids-limit',
+    '64',
+    '--read-only',
+    // The only writable place: a small scratch area that cannot run programs
+    '--tmpfs',
+    '/tmp:rw,noexec,nosuid,size=16m',
+    // No more than 64 open files, no files over 16 MB, no core dumps
+    '--ulimit',
+    'nofile=64:64',
+    '--ulimit',
+    'fsize=16777216:16777216',
+    '--ulimit',
+    'core=0',
+    // No shared memory with the host or other containers
+    '--ipc',
+    'none',
+    // Never keep (potentially huge) program output in Docker's log files; the
+    // output is read from the attached streams instead
+    '--log-driver',
+    'none',
+    '--cap-drop',
+    'ALL',
+    '--security-opt',
+    'no-new-privileges',
+    '--user',
+    CONTAINER_USER,
+    '--mount',
+    `type=bind,src=${projectDirectory},dst=/app,readonly`,
+    '--workdir',
+    '/app',
+    IMAGE,
+    'timeout',
+    '-k',
+    '1',
+    String(timeoutMs / 1000),
+    'python',
+    '-B',
+    ...(callMain ? ['-c', ENTRY_POINT_HARNESS] : ['/app/main.py']),
+  ];
+}
+
+// What Docker recorded about a finished container: how long the program ran
+// (from Docker's own start/finish timestamps, nanosecond precision, or null if
+// they are unavailable) and whether the kernel killed it for using too much
+// memory. The latter is the only way to tell an out-of-memory kill from the
+// program crashing, since both look like a non-zero exit code.
+async function inspectContainer(containerName) {
+  try {
+    const inspect = await dockerCommand([
+      'inspect',
+      '--format',
+      '{{.State.OOMKilled}} {{.State.StartedAt}} {{.State.FinishedAt}}',
+      containerName,
+    ]);
+    if (inspect.exitCode !== 0) return { runtimeMs: null, oomKilled: false };
+
+    const [oomKilled, started, finished] = inspect.stdout.trim().split(' ');
+    const runtime = toMs(finished) - toMs(started);
+    return {
+      runtimeMs: Number.isFinite(runtime) && runtime >= 0 ? runtime : null,
+      oomKilled: oomKilled === 'true',
+    };
+  } catch {
+    return { runtimeMs: null, oomKilled: false };
+  }
+}
+
+// Parses an RFC 3339 timestamp, keeping sub-millisecond precision
+function toMs(timestamp) {
+  const match = /^(.*T\d\d:\d\d:\d\d)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)$/.exec(
+    timestamp ?? ''
+  );
+  if (!match) return NaN;
+  const fraction = Number(`0.${match[2] ?? '0'}`);
+  return Date.parse(`${match[1]}${match[3]}`) + fraction * 1000;
+}
+
+/**
+ * Removes sandbox containers left behind when the server stopped mid-run
+ * (for example a nodemon restart). Safe to call when Docker is not running.
+ */
+export async function removeOrphanedContainers() {
+  try {
+    const list = await dockerCommand([
+      'ps',
+      '--all',
+      '--quiet',
+      '--filter',
+      `label=${SANDBOX_LABEL}`,
+    ]);
+    const ids = list.stdout.split(/\s+/).filter(Boolean);
+    if (list.exitCode !== 0 || ids.length === 0) return 0;
+
+    await dockerCommand(['rm', '--force', ...ids], '', 30000);
+    return ids.length;
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * Execute main.py from a temporary project directory
  * inside a restricted Docker container.
@@ -82,7 +269,8 @@ export async function executeDockerPythonFile(
   filePath,
   stdin = '',
   timeoutMs = DEFAULT_TIMEOUT_MS,
-  cwd
+  cwd,
+  options = {}
 ) {
   if (!cwd || !path.isAbsolute(cwd)) {
     throw new Error('An absolute project directory is required.');
@@ -96,47 +284,21 @@ export async function executeDockerPythonFile(
     throw new Error('Invalid timeout.');
   }
 
-  const started = performance.now();
-  const containerName = `cs343-${randomUUID()}`;
-  // process.getuid does not exist on Windows. Docker Desktop maps bind mounts
-  // to world-readable files there, so an unprivileged user (nobody) is enough.
-  const containerUser =
-    typeof process.getuid === 'function'
-      ? `${process.getuid()}:${process.getgid()}`
-      : '65534:65534';
+  return withRunSlot(() => runContainer(stdin, timeoutMs, cwd, options));
+}
 
-  const createArgs = [
-    'create',
-    '--name',
-    containerName,
-    '--interactive',
-    '--network',
-    'none',
-    '--memory',
-    '128m',
-    '--cpus',
-    '0.5',
-    '--pids-limit',
-    '64',
-    '--read-only',
-    '--cap-drop',
-    'ALL',
-    '--security-opt',
-    'no-new-privileges',
-    '--user',
-    containerUser,
-    '--mount',
-    `type=bind,src=${cwd},dst=/app,readonly`,
-    '--workdir',
-    '/app',
-    IMAGE,
-    'python',
-    '-B',
-    '/app/main.py',
-  ];
+async function runContainer(stdin, timeoutMs, cwd, options) {
+  const containerName = `cs343-${randomUUID()}`;
+  await makeWorldReadable(cwd);
 
   try {
-    const creation = await dockerCommand(createArgs);
+    const creation = await dockerCommand([
+      'create',
+      '--name',
+      containerName,
+      '--interactive',
+      ...sandboxArgs(cwd, timeoutMs, options),
+    ]);
 
     if (
       creation.exitCode !== 0 ||
@@ -146,16 +308,29 @@ export async function executeDockerPythonFile(
       throw new Error(`Docker creation failed: ${creation.stderr}`);
     }
 
+    const started = performance.now();
     const execution = await dockerCommand(
       ['start', '--attach', '--interactive', containerName],
       stdin,
-      timeoutMs
+      timeoutMs + DOCKER_OVERHEAD_MS
     );
+    const wallClockMs = performance.now() - started;
+
+    const details = await inspectContainer(containerName);
+    const runtimeMs = details.runtimeMs ?? wallClockMs;
 
     return {
-      ...execution,
-      runtimeMs: performance.now() - started,
-      containerName,
+      stdout: execution.stdout,
+      stderr: execution.stderr,
+      exitCode: execution.exitCode,
+      // 137 = killed by `timeout -k` after ignoring the polite stop signal
+      timedOut:
+        execution.timedOut ||
+        execution.exitCode === TIMEOUT_EXIT_CODE ||
+        (execution.exitCode === 137 && runtimeMs >= timeoutMs),
+      outputExceeded: execution.outputExceeded,
+      oomKilled: details.oomKilled,
+      runtimeMs,
     };
   } finally {
     // Always attempt to remove the container, including after timeout.

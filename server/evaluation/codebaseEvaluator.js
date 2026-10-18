@@ -1,14 +1,14 @@
-import {
-  access,
-  mkdtemp,
-  mkdir,
-  readFile,
-  rm,
-  writeFile,
-} from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { executeDockerPythonFile } from '../execution/dockerSandbox.js';
+import {
+  executeDockerPythonFile,
+  NO_MAIN_EXIT_CODE,
+  NO_MAIN_MARKER,
+} from '../execution/dockerSandbox.js';
+
+const MAIN_MISSING_REASON = 'main.py is missing.';
+const MAIN_UNDEFINED_REASON = 'main() is not defined.';
 
 /**
  * Validates a submitted file/directory name before writing it to disk.
@@ -27,6 +27,68 @@ function validateNodeName(name) {
   ) {
     throw new Error(`Invalid file or directory name: ${name}`);
   }
+}
+
+// Upper bounds for a submitted tree, matching the editor's room limits
+const MAX_TREE_FILES = 200;
+const MAX_TREE_DEPTH = 20;
+const MAX_TOTAL_CONTENT_BYTES = 512 * 1024;
+
+/**
+ * Checks a submitted codebase tree without touching the disk. Returns an
+ * error message, or null when the tree can be written and run.
+ */
+export function validateCodebaseTree(codebase) {
+  if (
+    !codebase ||
+    codebase.type !== 'directory' ||
+    !Array.isArray(codebase.children)
+  ) {
+    return 'A valid codebase directory is required.';
+  }
+
+  let files = 0;
+  let bytes = 0;
+
+  function check(children, depth) {
+    if (depth > MAX_TREE_DEPTH) return 'The codebase is nested too deeply.';
+
+    const names = new Set();
+    for (const node of children) {
+      try {
+        validateNodeName(node?.name);
+      } catch (error) {
+        return error.message;
+      }
+      // Names are compared case-insensitively since Windows file systems are
+      if (names.has(node.name.toLowerCase())) {
+        return `Duplicate name in the same folder: ${node.name}`;
+      }
+      names.add(node.name.toLowerCase());
+
+      if (node.type === 'directory') {
+        if (!Array.isArray(node.children ?? [])) {
+          return `Invalid directory: ${node.name}`;
+        }
+        const error = check(node.children ?? [], depth + 1);
+        if (error) return error;
+      } else if (node.type === 'file') {
+        if (node.content !== undefined && typeof node.content !== 'string') {
+          return `File content must be text: ${node.name}`;
+        }
+        files += 1;
+        bytes += Buffer.byteLength(node.content ?? '', 'utf8');
+      } else {
+        return `Invalid node type: ${node.type}`;
+      }
+    }
+
+    if (files > MAX_TREE_FILES) return 'The codebase has too many files.';
+    if (bytes > MAX_TOTAL_CONTENT_BYTES) return 'The codebase is too large.';
+    return null;
+  }
+
+  return check(codebase.children, 0);
 }
 
 /**
@@ -83,36 +145,72 @@ export async function createTemporaryCodebase(codebase) {
 }
 
 /**
- * Checks the required Python entry point before running any tests.
- * A valid submission must contain main.py and define a main() function.
+ * Checks that the submission contains a main.py file before running any tests.
+ * Whether main() is defined is decided when the code runs: the sandbox harness
+ * loads main.py and reports a missing entry point itself, which avoids guessing
+ * from the source text.
  */
 export async function validatePythonEntryPoint(temporaryDirectory) {
-  const mainPath = path.join(temporaryDirectory, 'main.py');
-
   try {
-    await access(mainPath);
+    const main = await stat(path.join(temporaryDirectory, 'main.py'));
+    if (main.isFile()) {
+      return { valid: true, reason: null };
+    }
   } catch {
-    return {
-      valid: false,
-      reason: 'main.py is missing.',
-    };
+    // Fall through: no main.py
   }
 
-  const mainContent = await readFile(mainPath, 'utf8');
+  return { valid: false, reason: MAIN_MISSING_REASON };
+}
 
-  const mainFunctionPattern = /^\s*def\s+main\s*\(/m;
+/**
+ * Output is compared ignoring Windows line endings and trailing whitespace
+ * on each line, which test authors and programs often disagree on.
+ */
+export function normaliseOutput(text) {
+  return String(text ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .join('\n')
+    .trimEnd();
+}
 
-  if (!mainFunctionPattern.test(mainContent)) {
-    return {
-      valid: false,
-      reason: 'main.py must define a main() function.',
-    };
+// Python reports these when the container's process limit stops it from
+// starting another thread or process
+const PROCESS_LIMIT_PATTERN =
+  /can't start new thread|Resource temporarily unavailable|BlockingIOError/;
+
+/**
+ * Names why a run was stopped or crashed, or returns null if it ran to a
+ * normal finish. The checks go from the most specific cause to the least, so
+ * the team is told what actually went wrong:
+ *  - the sandbox's own limits (time, output, memory, processes), which are the
+ *    "security responses" the spec counts as failures,
+ *  - a main.py without a callable main(),
+ *  - any other crash.
+ * The time limit itself is enforced inside the container by `timeout`, which
+ * is what sets `timedOut`. The measured runtime is not compared with it again
+ * because it also covers process start-up, so a program finishing right at the
+ * limit would be failed by that overhead.
+ */
+export function classifyExecutionFailure(execution) {
+  if (execution.timedOut) return 'Time limit exceeded.';
+  if (execution.outputExceeded) return 'Output limit exceeded.';
+  if (execution.oomKilled || /MemoryError/.test(execution.stderr ?? '')) {
+    return 'Memory limit exceeded.';
   }
-
-  return {
-    valid: true,
-    reason: null,
-  };
+  if (
+    execution.exitCode === NO_MAIN_EXIT_CODE &&
+    (execution.stderr ?? '').includes(NO_MAIN_MARKER)
+  ) {
+    return MAIN_UNDEFINED_REASON;
+  }
+  if (execution.exitCode !== 0) {
+    return PROCESS_LIMIT_PATTERN.test(execution.stderr ?? '')
+      ? 'Process limit exceeded.'
+      : 'Runtime error.';
+  }
+  return null;
 }
 
 /**
@@ -133,21 +231,16 @@ export async function evaluateTestCase(temporaryDirectory, testCase) {
     'main.py',
     input,
     timeLimit,
-    temporaryDirectory
+    temporaryDirectory,
+    { callMain: true }
   );
 
-  const actualOutput = execution.stdout.trimEnd();
-  const expected = expectedOutput.trimEnd();
+  const actualOutput = normaliseOutput(execution.stdout);
+  const expected = normaliseOutput(expectedOutput);
 
-  let reason = null;
+  let reason = classifyExecutionFailure(execution);
 
-  if (execution.timedOut) {
-    reason = 'Time limit exceeded.';
-  } else if (execution.outputExceeded) {
-    reason = 'Output limit exceeded.';
-  } else if (execution.exitCode !== 0) {
-    reason = 'Runtime error.';
-  } else if (actualOutput !== expected) {
+  if (reason === null && actualOutput !== expected) {
     reason = 'Incorrect output.';
   }
 
@@ -170,6 +263,7 @@ export async function evaluateTestCase(temporaryDirectory, testCase) {
  */
 export function formatTestResult(testCase, result) {
   const formattedResult = {
+    ...(testCase.id !== undefined && { testCaseId: testCase.id }),
     passed: result.passed,
     hidden: testCase.hidden ?? false,
     runtimeMs: result.runtimeMs,
@@ -195,11 +289,53 @@ export function formatTestResult(testCase, result) {
 }
 
 /**
+ * The failed result of a test case that could not run because the submission
+ * has no usable entry point (it counts as a failure with no runtime).
+ */
+function entryPointFailure(testCase, { reason }) {
+  return formatTestResult(testCase, {
+    passed: false,
+    runtimeMs: 0,
+    reason,
+    stdout: '',
+  });
+}
+
+/**
+ * Builds the evaluation report from the per-test results. `reason` is the
+ * submission-wide failure (such as a missing main.py); without one, a generic
+ * message is used when any test failed.
+ */
+function summariseResults(testCases, results, reason = null) {
+  const passedTests = results.filter((result) => result.passed).length;
+
+  const passPercentage =
+    testCases.length === 0 ? 0 : (passedTests / testCases.length) * 100;
+
+  const totalPassedRuntimeMs = results
+    .filter((result) => result.passed)
+    .reduce((total, result) => total + result.runtimeMs, 0);
+
+  const allPassed = passedTests === testCases.length && reason === null;
+
+  return {
+    passed: allPassed,
+    reason: allPassed ? null : (reason ?? 'One or more test cases failed.'),
+    passedTests,
+    totalTests: testCases.length,
+    passPercentage,
+    totalPassedRuntimeMs,
+    results,
+  };
+}
+
+/**
  * Evaluates a complete submission.
  *
  * Flow:
  * 1. Reconstruct the submitted file tree in a temporary directory.
- * 2. Validate main.py and main().
+ * 2. Validate main.py; main() is called by the sandbox, which reports it
+ *    missing if it is not defined.
  * 3. Execute each test case.
  * 4. Protect hidden-test information.
  * 5. Calculate the percentage of tests passed (P).
@@ -217,47 +353,100 @@ export async function evaluateCodebase(codebase, testCases = []) {
 
     const entryPoint = await validatePythonEntryPoint(temporaryDirectory);
 
+    // Every test case fails when there is no entry point, so each one still
+    // gets its own result (hidden tests redacted like any other failure)
     if (!entryPoint.valid) {
-      return {
-        passed: false,
-        reason: entryPoint.reason,
-        passedTests: 0,
-        totalTests: testCases.length,
-        passPercentage: 0,
-        totalPassedRuntimeMs: 0,
-        results: [],
-      };
+      return summariseResults(
+        testCases,
+        testCases.map((testCase) => entryPointFailure(testCase, entryPoint)),
+        entryPoint.reason
+      );
     }
 
     const results = [];
+    let entryFailure = null;
 
     for (const testCase of testCases) {
+      // A missing main() fails the same way for every test case, so the
+      // remaining tests are not run
+      if (entryFailure) {
+        results.push(entryPointFailure(testCase, entryFailure));
+        continue;
+      }
+
       const result = await evaluateTestCase(temporaryDirectory, testCase);
+
+      if (result.reason === MAIN_UNDEFINED_REASON) {
+        entryFailure = { reason: result.reason };
+      }
 
       results.push(formatTestResult(testCase, result));
     }
 
-    const passedTests = results.filter((result) => result.passed).length;
-
-    const passPercentage =
-      testCases.length === 0 ? 0 : (passedTests / testCases.length) * 100;
-
-    const totalPassedRuntimeMs = results
-      .filter((result) => result.passed)
-      .reduce((total, result) => total + result.runtimeMs, 0);
-
-    return {
-      passed: passedTests === testCases.length,
-      reason:
-        passedTests === testCases.length
-          ? null
-          : 'One or more test cases failed.',
-      passedTests,
-      totalTests: testCases.length,
-      passPercentage,
-      totalPassedRuntimeMs,
+    return summariseResults(
+      testCases,
       results,
-    };
+      entryFailure ? entryFailure.reason : null
+    );
+  } finally {
+    if (temporaryDirectory) {
+      await removeTemporaryCodebase(temporaryDirectory);
+    }
+  }
+}
+
+/**
+ * Runs a codebase against the given (non-hidden) test cases for the editor's
+ * Run button. Unlike a submission nothing is scored or saved, and every result
+ * shows the input, expected output and actual output, pass or fail. Callers
+ * must only pass test cases the user is allowed to see.
+ */
+export async function runVisibleTests(codebase, testCases = []) {
+  let temporaryDirectory;
+
+  try {
+    temporaryDirectory = await createTemporaryCodebase(codebase);
+
+    const entryPoint = await validatePythonEntryPoint(temporaryDirectory);
+    const results = [];
+    let entryFailure = entryPoint.valid ? null : entryPoint.reason;
+
+    for (const testCase of testCases) {
+      const base = {
+        testCaseId: testCase.id,
+        input: testCase.input ?? '',
+        expectedOutput: testCase.expectedOutput ?? '',
+      };
+
+      // A missing entry point fails every test the same way, so skip running
+      if (entryFailure) {
+        results.push({
+          ...base,
+          passed: false,
+          actualOutput: '',
+          stderr: '',
+          runtimeMs: 0,
+          reason: entryFailure,
+        });
+        continue;
+      }
+
+      const result = await evaluateTestCase(temporaryDirectory, testCase);
+      if (result.reason === MAIN_UNDEFINED_REASON) {
+        entryFailure = result.reason;
+      }
+
+      results.push({
+        ...base,
+        passed: result.passed,
+        actualOutput: result.stdout,
+        stderr: result.stderr,
+        runtimeMs: result.runtimeMs,
+        reason: result.reason,
+      });
+    }
+
+    return results;
   } finally {
     if (temporaryDirectory) {
       await removeTemporaryCodebase(temporaryDirectory);

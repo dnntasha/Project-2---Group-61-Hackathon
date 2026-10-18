@@ -20,67 +20,89 @@
   width: 100%;
 }
 
-.file-tree-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 3px 4px;
+/* One whole entry: clickable line with its small actions underneath the icon */
+.file-tree-entry {
+  padding: 3px 6px;
   border-radius: 6px;
   font-size: 15px;
 }
 
-.file-tree-row:hover {
+.file-tree-entry:hover {
   background: var(--accent-bg);
 }
 
-.file-tree-row button {
+.file-tree-entry.selected {
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.file-tree-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.file-tree-main:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+.file-tree-toggle {
+  display: inline-block;
+  width: 16px;
+  flex-shrink: 0;
+  font-size: 11px;
+  text-align: center;
+}
+
+.file-tree-name {
+  overflow-wrap: anywhere;
+}
+
+.file-tree-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg, transparent);
+  color: var(--text-h);
   font: inherit;
-  padding: 2px 7px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+}
+
+.file-tree-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  /* lines up under the icon: toggle width + gap */
+  padding-left: 22px;
+}
+
+.file-tree-actions button {
+  padding: 0;
+  border: none;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 400;
   cursor: pointer;
 }
 
-.file-tree-row button:hover {
-  border-color: var(--accent);
-  color: var(--text-h);
+.file-tree-actions button:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
-.file-tree-row button:focus-visible {
+.file-tree-actions button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
-}
-
-/* Name of a file, clickable to open it in the editor */
-.file-tree-row .file-tree-file {
-  padding: 2px 6px;
-  border-color: transparent;
-  font-size: 15px;
-  color: var(--text-h);
-}
-
-.file-tree-row .file-tree-file.selected {
-  background: var(--accent-bg);
-  border-color: var(--accent-border);
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.file-tree-row .file-tree-toggle {
-  width: 24px;
-  padding: 2px;
-  border: none;
-}
-
-.file-tree-toggle-placeholder {
-  display: inline-block;
-  width: 24px;
-  flex-shrink: 0;
 }
 
 .file-tree-children {

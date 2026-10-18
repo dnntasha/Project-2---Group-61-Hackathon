@@ -17,18 +17,21 @@ try {
 
   const token = await createSession(user.id);
 
-  const response = await globalThis.fetch('http://localhost:5000/api/submit', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      teamId: 1,
-      problemId: 1,
-      codebase: {},
-    }),
-  });
+  const response = await globalThis.fetch(
+    `http://localhost:${process.env.PORT || 5000}/api/submit`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        teamId: 1,
+        problemId: 1,
+        codebase: {},
+      }),
+    }
+  );
 
   const result = await response.json();
 

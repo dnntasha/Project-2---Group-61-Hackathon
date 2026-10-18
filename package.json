@@ -3,7 +3,10 @@
   "version": "1.0.0",
   "type": "commonjs",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "npm test --prefix server && npm test --prefix client",
+    "lint": "npm run lint --prefix server && npm run lint --prefix client",
+    "build": "npm run build --prefix client",
+    "start": "npm run build && npm run start --prefix server",
     "install:all": "npm install --no-fund --no-audit && npm install --prefix server --no-fund --no-audit && npm install --prefix client --no-fund --no-audit && npm run setup:backend && npm run docker:setup",
     "setup:backend": "npm run --prefix server env:setup && npm run --prefix server db:setup",
     "dev": "node scripts/dev.mjs",
@@ -18,11 +21,11 @@
   "lint-staged": {
     "client/src/**/*.{js,jsx}": [
       "prettier --write",
-      "eslint --fix --quiet --config client/eslint.config.js"
+      "eslint --fix --config client/eslint.config.js"
     ],
     "server/**/*.{js,mjs}": [
       "prettier --write",
-      "eslint --fix --quiet --config server/eslint.config.js"
+      "eslint --fix --config server/eslint.config.js"
     ],
     "*.{json,md,yml,css}": [
       "prettier --write"

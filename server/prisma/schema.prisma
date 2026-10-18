@@ -27,6 +27,8 @@ model Session {
   userId       Int
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   lastActivity DateTime @default(now())
+
+  @@index([userId])
 }
 
 model Group {
@@ -71,9 +73,43 @@ model Team {
   members     TeamMember[]
   invites     TeamInvite[]
   submissions Submission[]
+  codebases   Codebase[]
+  
+  activeProblemId Int?
+  activeProblem   Problem? @relation("ActiveProblem", fields: [activeProblemId], references: [id], onDelete: SetNull)
 
   @@unique([groupId, name])
 }
+
+// One codebase per team per problem (spec 8 and 10). fileTree is the folder
+// structure as JSON; the contents of each file are CodebaseFile rows.
+model Codebase {
+  id        Int    @id @default(autoincrement())
+  teamId    Int
+  problemId Int
+  fileTree  String
+
+  team    Team           @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  problem Problem        @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  files   CodebaseFile[]
+
+  @@unique([teamId, problemId])
+}
+
+model CodebaseFile {
+  id         Int    @id @default(autoincrement())
+  codebaseId Int
+  path       String
+  content    String
+
+  codebase Codebase @relation(fields: [codebaseId], references: [id], onDelete: Cascade)
+
+  @@unique([codebaseId, path])
+}
+
+//removed the TeamFile because it only keeps 1 set of files per team so 
+//if you decided to write code for Problem 1 and switch to problemm 2 it would either be overwritten
+//or carry over
 
 model TeamMember {
   id       Int      @id @default(autoincrement())
@@ -97,6 +133,7 @@ model TeamInvite {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([teamId, userId])
+  @@index([userId])
 }
 
 model GroupInvite {
@@ -109,6 +146,7 @@ model GroupInvite {
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([groupId, userId])
+  @@index([userId])
 }
 
 //The programing challenge defined by the admin
@@ -126,6 +164,8 @@ model Problem {
   group       Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
   testCases   TestCase[]
   submissions Submission[]
+  codebases   Codebase[]
+  activeForTeams  Team[]   @relation("ActiveProblem")
 
   @@unique([groupId, orderIndex])
 }
@@ -140,6 +180,7 @@ model TestCase {
   hidden         Boolean @default(false)
 
   problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  results SubmissionResult[]
 }
 
 //A team's submitted attemt at the problem
@@ -150,10 +191,30 @@ model Submission {
   scoreP    Float?
   scoreT    Float?
   status    String   @default("PENDING")
+  reason    String?
   createdAt DateTime @default(now())
 
   team    Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
   problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  results SubmissionResult[]
 
   @@index([teamId, problemId])
+}
+
+// The outcome of one test case in one submission (the submission timeline).
+// Input and expected output are not copied: they come from the TestCase.
+// actualOutput is only kept for failed visible tests (spec 11).
+model SubmissionResult {
+  id           Int     @id @default(autoincrement())
+  submissionId Int
+  testCaseId   Int
+  passed       Boolean
+  runtimeMs    Float
+  reason       String?
+  actualOutput String?
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  testCase   TestCase   @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId])
 }

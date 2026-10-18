@@ -5,52 +5,101 @@ import {
   useRef,
   useState,
 } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import Prism from 'prismjs';
+import 'prismjs/components/prism-python.js';
+import { useSearchParams } from '../../router.jsx';
 import FileTree from '../FileTree/FileTree.jsx';
+import ResponseArea from '../ResponseArea/ResponseArea.jsx';
+import SubmissionTimeline from '../SubmissionTimeline/SubmissionTimeline.jsx';
 import { api, getToken } from '../../api.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { getFilePathsById } from '../FileTree/fileTreeUtils.js';
-import {
-  applyOp,
-  compose,
-  diffToOp,
-  transform,
-  transformIndex,
-} from '../../../../server/lib/textOp.js';
+import { INDENT, nextLineIndentation, shiftLines } from './indentation.js';
+import { mergeText } from '../../../../server/lib/textMerge.js';
+import { mapSelection } from './caretPosition.js';
 import './CodeEditor.css';
 
 // The file that is open when the editor first loads
 const DEFAULT_FILE = 'main.py';
 
+// Reconnect delays: start at 1s, double each failed attempt, cap at 15s
+const MIN_RETRY_MS = 1000;
+const MAX_RETRY_MS = 15000;
+// Close codes after which reconnecting can't help: the server refused the room
+// (1008), the sign-in expired (4001) or the user was removed from the team
+// (4003). Any other close (network drop, server restart) is retried.
+const NO_RECONNECT_CODES = new Set([1003, 1008, 4001, 4003]);
+
 // Builds the WebSocket URL, defaulting to ws(s)://<current host>/ws.
-// The session token is passed as a query param because browsers can't set
-// custom headers on WebSocket connections.
-function getWebSocketUrl(wsUrl, roomId, problemId) {
+function getWebSocketUrl(wsUrl, roomId) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const url = new URL(wsUrl || `${protocol}//${window.location.host}/ws`);
-  const token = getToken();
 
-  if (token) url.searchParams.set('token', token);
   url.searchParams.set('roomId', roomId);
-  url.searchParams.set('problemId', problemId);
   return url.toString();
 }
 
-// Formats a RUN_RESULTS message as the text shown in the terminal panel
+// Opens the socket. Browsers can't set headers on a WebSocket, so the session
+// token is sent as a second subprotocol rather than in the URL, where it would
+// be written to server and proxy logs.
+function openEditorSocket(wsUrl, roomId) {
+  return new WebSocket(getWebSocketUrl(wsUrl, roomId), [
+    'bearer',
+    getToken() ?? '',
+  ]);
+}
+
+// One-line summary of a graded submission for the terminal panel
+function getSubmissionSummary(result) {
+  if (!result.success) return `Submission failed: ${result.error}`;
+  const { passedTests, totalTests } = result.evaluation;
+  return `Submission graded: ${passedTests}/${totalTests} tests passed. See the report below.`;
+}
+
+// Turns code into HTML with <span class="token ..."> around keywords, strings,
+// comments and so on (Prism's Python grammar). Prism escapes the text itself,
+// so the result is safe to insert as HTML. The trailing newline gives the
+// highlighted copy the same final empty line the textarea shows.
+function highlightPython(code) {
+  return `${Prism.highlight(code, Prism.languages.python, 'python')}
+`;
+}
+
+// What to tell the user while the code is read-only
+const READ_ONLY_NOTICES = {
+  'not-started':
+    'The event has not started yet. You can look around, but the code is read-only until the admin starts it.',
+  ended: 'The event has ended. The code is now read-only.',
+};
+
+// Formats a RUN_RESULTS message (one result per visible test case) as the text
+// shown in the terminal panel
 function getRunOutput(message) {
   if (message.error) return `Run failed: ${message.error}`;
 
-  const lines = [
-    '--- RUN OUTPUT ---',
-    `stdout:\n${message.stdout || '(no output)'}`,
-  ];
-  if (message.stderr) lines.push(`stderr:\n${message.stderr}`);
-  if (message.timedOut)
-    lines.push('Execution stopped after the 5-second limit.');
-  if (message.outputLimitExceeded)
-    lines.push('Output was truncated at the 64 KB limit.');
-  lines.push(`Exit code: ${message.exitCode}`);
-  return lines.join('\n\n');
+  const results = message.results ?? [];
+  if (results.length === 0) {
+    return 'This problem has no visible test cases to run.';
+  }
+
+  const passed = results.filter((result) => result.passed).length;
+  const blocks = results.map((result, index) => {
+    const lines = [
+      `Test ${index + 1}: ${result.passed ? 'PASSED' : 'FAILED'}`,
+      `Input:\n${result.input || '(empty)'}`,
+      `Expected output:\n${result.expectedOutput || '(empty)'}`,
+      `Your output:\n${result.actualOutput || '(no output)'}`,
+    ];
+    if (!result.passed && result.reason) lines.push(`Reason: ${result.reason}`);
+    if (result.stderr) lines.push(`stderr:\n${result.stderr}`);
+    return lines.join('\n');
+  });
+
+  return [
+    `--- RUN: ${passed} of ${results.length} visible tests passed ---`,
+    ...blocks,
+    'Hidden tests are only checked when you submit.',
+  ].join('\n\n');
 }
 
 /**
@@ -60,17 +109,23 @@ function getRunOutput(message) {
  * with the other users in the same room, so several people can type in the
  * same file at the same time and see each other's changes live.
  *
- * How syncing works (client side of operational transformation, see
- * lib/textOp.js):
- *  - For each file we track the last server `revision` we have seen, at most
- *    one `outstanding` operation that was sent but not yet acknowledged, a
- *    `buffer` operation holding everything typed since then, and `text` (what
- *    the user currently sees).
- *  - Typing updates `text` immediately and is added to the buffer. If nothing
- *    is outstanding, the buffer is sent; otherwise it waits for the ACK.
- *  - A remote operation is transformed against our outstanding and buffered
- *    changes before it is applied, so nobody's typing is overwritten, and the
- *    caret is shifted so it stays where the user was working.
+ * How syncing works (LAST-WRITE-WINS; this replaced operational transform):
+ *  - For each file we track `text` (what the user currently sees) and
+ *    `pending`, the number of edits we sent that the server has not yet
+ *    acknowledged with an ACK.
+ *  - Typing updates `text` immediately and sends the file's FULL new text to
+ *    the server (TEXT_EDIT { filePath, code }), which stores it as the file's
+ *    contents and relays it to everyone else. There are no operations, no
+ *    revision numbers and no merging: whoever's write reaches the server last
+ *    replaces the file for the whole team.
+ *  - A remote TEXT_EDIT carries the full text and simply replaces ours. The
+ *    one exception: while `pending > 0` we ignore remote text. The server
+ *    handles messages in order, so a remote write that arrives before our ACK
+ *    was processed BEFORE ours and ours wins; dropping it keeps this client
+ *    identical to the server. (Applying it would leave us showing the other
+ *    user's text while the server holds ours.)
+ *  - The caret keeps its numeric position (clamped to the new length) when
+ *    remote text replaces the file; it is not smartly shifted any more.
  *
  * The file tree is shared the same way, but simpler: file/folder operations go
  * to the server, which applies them and sends the whole tree back to everyone.
@@ -79,11 +134,9 @@ function getRunOutput(message) {
  *
  * Props:
  *  - roomId:    room to join (falls back to ?roomId=, then the user's own room)
- *  - problemId: problem identifier sent to the server
  *  - wsUrl:     optional override of the WebSocket URL
  */
-//const data = await api('/groups');
-export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
+export default function CodeEditor({ roomId, wsUrl }) {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const [teams, setTeams] = useState([]);
@@ -105,15 +158,11 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
       setTeamsError('');
 
       try {
-        //FIXME:
-        //
-        //const response = await api('/my-teams');
-        const response = await api('/groups');
+        const response = await api('/my-teams');
 
         if (!active) return;
 
-        //const availableTeams = response.teams || [];
-        const availableTeams = response.groups || [];
+        const availableTeams = response.teams || [];
         setTeams(availableTeams);
 
         const requestedTeamId = /^team-([1-9]\d*)$/.exec(
@@ -161,6 +210,11 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   // The room's shared file tree (null until the server sends it)
   const [tree, setTree] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
+  // True while waiting to retry after the connection dropped
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  // 'not-started' | 'running' | 'ended', as last reported by the server (null
+  // until it has said). The code can only be changed while it is 'running'.
+  const [eventStatus, setEventStatus] = useState(null);
   const [isReady, setIsReady] = useState(false);
   const [isFileLoading, setIsFileLoading] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
@@ -171,15 +225,70 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
   // Refs hold values that message handlers need to read the *latest* value of
   // without being re-created (or triggering renders) on every change.
   const textareaRef = useRef(null);
+  const highlightRef = useRef(null);
   const socketRef = useRef(null);
   const activePathRef = useRef(activeFilePath);
-  // filePath -> { revision, outstanding, buffer, text } (see above)
+  // filePath -> { text, pending } (see above)
   const filesRef = useRef(new Map());
   // The latest tree received, readable from message handlers
   const treeRef = useRef(null);
   // Caret/selection to restore after a remote edit re-renders the textarea
   const pendingSelectionRef = useRef(null);
   const requestCounterRef = useRef(0);
+  // Problem whose codebase the room is showing (from INIT_CODEBASE)
+  const problemIdRef = useRef(null);
+  const [problems, setProblems] = useState([]);
+  const [activeProblemId, setActiveProblemId] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  // The report shown in the response area (latest result or a timeline item)
+  const [shownSubmission, setShownSubmission] = useState(null);
+  const [timeline, setTimeline] = useState({
+    submissions: [],
+    used: 0,
+    submissionLimit: 0,
+  });
+  // Bumped after each submission so the timeline reloads
+  const [timelineVersion, setTimelineVersion] = useState(0);
+
+  const isLeader = Boolean(selectedTeam && selectedTeam.leaderId === user?.id);
+  const activeProblem = problems.find(
+    (problem) => problem.id === activeProblemId
+  );
+  const groupId = selectedTeam?.groupId;
+  const teamId = selectedTeam?.id;
+
+  // Shows a graded submission if it belongs to the problem on screen
+  const showSubmissionResult = useCallback((problemId, result) => {
+    setTerminalOutput(getSubmissionSummary(result));
+    if (problemId === undefined || problemId === problemIdRef.current) {
+      setShownSubmission(
+        result.success
+          ? { id: result.submissionId, evaluation: result.evaluation }
+          : { error: result.error }
+      );
+    }
+    setTimelineVersion((version) => version + 1);
+  }, []);
+
+  // The submission timeline of the current problem
+  useEffect(() => {
+    if (!teamId || !activeProblemId) {
+      setTimeline({ submissions: [], used: 0, submissionLimit: 0 });
+      return undefined;
+    }
+    let active = true;
+    api(`/teams/${teamId}/submissions?problemId=${activeProblemId}`)
+      .then((data) => active && setTimeline(data))
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [teamId, activeProblemId, timelineVersion]);
+
+  // A different problem has a different report
+  useEffect(() => {
+    setShownSubmission(null);
+  }, [activeProblemId, teamId]);
 
   // Keep the ref in sync with state on every render
   activePathRef.current = activeFilePath;
@@ -208,23 +317,25 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
     return false;
   }, []);
 
-  // Sends the user's buffered changes to the server, but only when no earlier
-  // operation is still awaiting its ACK (one in flight at a time keeps the
-  // transform logic simple and the server's view unambiguous)
+  // Sends the file's full current text to the server (last-write-wins: the
+  // server just overwrites its copy with this). Every send is counted in
+  // `pending` until the server's ACK comes back, see the ACK case below.
   const flushFile = useCallback(
     (filePath) => {
       const file = filesRef.current.get(filePath);
-      if (!file || file.outstanding || !file.buffer) return;
+      if (!file || file.mergeRejected) return;
       if (
         sendWsMessage({
           type: 'TEXT_EDIT',
+          problemId: problemIdRef.current,
           filePath,
-          op: file.buffer,
-          baseRevision: file.revision,
+          code: file.text,
+          baseCode: file.serverText,
         })
       ) {
-        file.outstanding = file.buffer;
-        file.buffer = null;
+        file.sent ??= [];
+        file.sent.push(file.text);
+        file.pending += 1;
       }
     },
     [sendWsMessage]
@@ -232,13 +343,8 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
 
   // Replaces our whole record of a file with the server's version, and shows
   // it if it is the active file
-  const resetFile = useCallback((filePath, text, revision) => {
-    filesRef.current.set(filePath, {
-      revision,
-      outstanding: null,
-      buffer: null,
-      text,
-    });
+  const resetFile = useCallback((filePath, text) => {
+    filesRef.current.set(filePath, { text, serverText: text, pending: 0, sent: [] });
     if (filePath === activePathRef.current) {
       pendingSelectionRef.current = null;
       setCode(text);
@@ -247,47 +353,44 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
     }
   }, []);
 
-  // Applies an edit made by another user
+  // Applies text written by another user: the file is replaced by their text
   const applyRemoteEdit = useCallback(
     (message) => {
       const file = filesRef.current.get(message.filePath);
-      // Unknown file, or we missed a revision: fetch a fresh copy instead
-      if (!file || message.revision !== file.revision + 1) {
+      // Unknown file: fetch it instead
+      if (!file) {
         sendWsMessage({ type: 'SELECT_FILE', filePath: message.filePath });
         return;
       }
+      if (typeof message.code !== 'string') return;
+      // We have a write the server has not acknowledged yet. The server handled
+      // this remote write first and ours after it, so ours is the winner and
+      // the remote text is already out of date. Ignore it (see the component comment).
+      const previousServerText = file.serverText ?? file.text;
+      const mergedText = mergeText(
+        previousServerText,
+        message.code,
+        file.text
+      );
+      file.serverText = message.code;
 
-      try {
-        // Rebase the remote operation over our outstanding op and buffered
-        // typing (and rebase those over it) so it fits what the user sees
-        let remote = message.op;
-        if (file.outstanding) {
-          [file.outstanding, remote] = transform(file.outstanding, remote);
-        }
-        if (file.buffer) {
-          [file.buffer, remote] = transform(file.buffer, remote);
-        }
+      const isActive = message.filePath === activePathRef.current;
+      const textarea = textareaRef.current;
+      // Keep the caret where it was, but never past the end of the new text
+      const selection =
+        isActive && textarea
+          ? {
+              ...mapSelection(file.text, mergedText, {
+                start: textarea.selectionStart,
+                end: textarea.selectionEnd,
+              }),
+            }
+          : null;
 
-        const isActive = message.filePath === activePathRef.current;
-        const textarea = textareaRef.current;
-        const selection =
-          isActive && textarea
-            ? {
-                start: transformIndex(remote, textarea.selectionStart),
-                end: transformIndex(remote, textarea.selectionEnd),
-              }
-            : null;
-
-        file.text = applyOp(file.text, remote);
-        file.revision = message.revision;
-        if (isActive) {
-          pendingSelectionRef.current = selection;
-          setCode(file.text);
-        }
-      } catch (error) {
-        // Our copy has drifted from the server's; ask for the server's copy
-        console.error('Could not apply remote edit, resyncing:', error);
-        sendWsMessage({ type: 'SELECT_FILE', filePath: message.filePath });
+      file.text = mergedText;
+      if (isActive) {
+        pendingSelectionRef.current = selection;
+        setCode(file.text);
       }
     },
     [sendWsMessage]
@@ -332,23 +435,28 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
       setTree(newTree);
 
       const carried = new Map();
+      const resend = [];
       for (const [id, oldPath] of oldPaths) {
         const file = filesRef.current.get(oldPath);
         const newPath = newPaths.get(id);
         if (!file || !newPath) continue;
 
-        // An edit still awaiting its ACK was sent to the old path, so the
-        // server never saw it; fold it back into what is waiting to be sent
-        if (file.outstanding) {
-          file.buffer = file.buffer
-            ? compose(file.outstanding, file.buffer)
-            : file.outstanding;
-          file.outstanding = null;
+        // Edits still awaiting their ACK were sent to the old path, where the
+        // server will not apply them (the file has moved). Forget them and,
+        // after the loop, send the current text again to the new path.
+        const hadPending = file.pending > 0;
+        file.pending = 0;
+        file.sent = [];
+
+        // A rejected edit must remain available for manual recovery,
+        // not be silently retried after a rename or move.
+        if (hadPending && !file.mergeRejected) {
+          resend.push(newPath);
         }
         carried.set(newPath, file);
       }
       filesRef.current = carried;
-      for (const filePath of carried.keys()) flushFile(filePath);
+      for (const filePath of resend) flushFile(filePath);
 
       // Follow the open file if it moved; fall back to another if it is gone
       const activePath = activePathRef.current;
@@ -369,12 +477,121 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
         // Full room state on connect: show the active file, or request it if
         // the room doesn't have it yet
         case 'INIT_CODEBASE': {
+          // A different problemId means the leader switched, not a reconnect
+          const switchedProblem =
+            problemIdRef.current !== null &&
+            message.problemId !== problemIdRef.current;
+          problemIdRef.current = message.problemId ?? null;
+          setActiveProblemId(message.problemId ?? null);
+          // After a reconnect, anything typed that never reached the server is
+          // replaced by the team's version; say so rather than lose it quietly
+          const previousFiles = filesRef.current;
+          const unsynced = [...previousFiles.values()].filter(
+            (file) => file.pending > 0 && !file.mergeRejected
+          ).length;
+          const rejectedFiles = [...previousFiles.entries()].filter(
+            ([, file]) => file.mergeRejected
+          );
+          const pendingFiles = [...previousFiles.entries()].filter(
+            ([, file]) => file.pending > 0 && !file.mergeRejected
+          );
+          if (unsynced > 0 && !switchedProblem) {
+            setTerminalOutput(
+              `Reconnected. ${unsynced} file${unsynced === 1 ? '' : 's'} had changes that could not be sent and were reset to the team's version.`
+            );
+          }
           filesRef.current = new Map();
           treeRef.current = message.tree;
           setTree(message.tree);
           for (const [filePath, text] of Object.entries(message.files || {})) {
-            resetFile(filePath, text, message.revisions?.[filePath] ?? 0);
+            resetFile(filePath, text);
           }
+
+          if (!switchedProblem && pendingFiles.length > 0) {
+            let recovered = 0;
+            let conflicts = 0;
+
+            for (const [filePath, previous] of pendingFiles) {
+              const current = filesRef.current.get(filePath);
+              if (!current) continue;
+
+              try {
+                if (previous.serverText !== current.serverText) {
+                  // The server changed while we were disconnected.
+                  // Preserve the local edit without automatically overwriting
+                  // a teammate's changes.
+                  throw new Error('Server changed during reconnection');
+                }
+
+                const merged = mergeText(
+                  previous.serverText,
+                  current.serverText,
+                  previous.text
+                );
+                current.text = merged;
+                current.pending = 0;
+                current.sent = [];
+
+                if (merged !== current.serverText) {
+                  recovered++;
+                  if (filePath === activePathRef.current) {
+                    setCode(merged);
+                  }
+                  queueMicrotask(() => {
+                    if (
+                      filesRef.current.get(filePath) === current &&
+                      current.pending === 0 &&
+                      !current.mergeRejected &&
+                      current.text !== current.serverText
+                    ) {
+                      flushFile(filePath);
+                    }
+                  });
+                }
+              } catch {
+                current.text = previous.text;
+                current.pending = 0;
+                current.sent = [];
+                current.mergeRejected = true;
+                conflicts++;
+
+                if (filePath === activePathRef.current) {
+                  setCode(previous.text);
+                }
+              }
+            }
+
+            if (recovered || conflicts) {
+              setTerminalOutput(
+                `Reconnected: ${recovered} file(s) recovering unsaved edits; ${conflicts} file(s) require manual recovery.`
+              );
+            }
+          }
+
+          if (!switchedProblem && rejectedFiles.length > 0) {
+            let preserved = 0;
+            for (const [filePath, previous] of rejectedFiles) {
+              const current = filesRef.current.get(filePath);
+              if (!current) continue;
+
+              current.text = previous.text;
+              current.mergeRejected = true;
+              current.pending = 0;
+              current.sent = [];
+              preserved++;
+
+              if (filePath === activePathRef.current) {
+                setCode(previous.text);
+              }
+            }
+
+            if (preserved > 0) {
+              setTerminalOutput(
+                `${preserved} file${preserved === 1 ? '' : 's'} contain unsaved edits that could not be merged. Your text is preserved locally, but it has NOT been saved to the server. Copy it somewhere safe before refreshing.`
+              );
+            }
+          }
+
           // Open main.py, or whatever file is first if it was deleted
           if (!filesRef.current.has(activePathRef.current)) {
             showFile(filesRef.current.keys().next().value ?? '');
@@ -389,23 +606,90 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
 
         // Authoritative copy of one file (response to SELECT_FILE, or sent
         // when the server couldn't reconcile our edit) - overwrites local text
-        case 'FILE_SNAPSHOT':
-          resetFile(message.filePath, message.code, message.revision);
-          break;
+        case 'FILE_SNAPSHOT': {
+          const existing = filesRef.current.get(message.filePath);
 
-        // Another user's edit, already rebased onto the server's history
+          if (existing?.mergeRejected) {
+            // Keep unsaved local work visible instead of replacing it.
+            // Store the authoritative version separately for recovery.
+            existing.serverText = message.code;
+            existing.pending = 0;
+            existing.sent = [];
+            // Keep recovery mode active until the user explicitly resolves
+            // the unsaved text. Do not silently resume automatic saves.
+            existing.mergeRejected = true;
+
+            if (message.filePath === activePathRef.current) {
+              setCode(existing.text);
+              setIsReady(true);
+              setIsFileLoading(false);
+            }
+
+            setTerminalOutput(
+              'Your latest edit could not be saved. Your unsaved text is still in the editor. Copy it somewhere safe before refreshing or switching files.'
+            );
+          } else {
+            resetFile(message.filePath, message.code);
+          }
+          break;
+        }
+
+        // Another user's write: the file's new full text
         case 'TEXT_EDIT':
           applyRemoteEdit(message);
           break;
 
-        // The server accepted our outstanding edit: it is now part of the
-        // confirmed document, so send anything typed in the meantime
+        // The server applied one of our writes. When the count reaches zero
+        // the server holds exactly what we show, so remote text is accepted again
         case 'ACK': {
           const file = filesRef.current.get(message.filePath);
-          if (!file?.outstanding) break;
-          file.outstanding = null;
-          file.revision = message.revision;
-          flushFile(message.filePath);
+          if (file) {
+            const sentText = file.sent?.shift();
+            file.pending = Math.max(0, file.pending - 1);
+
+            if (typeof message.code === 'string') {
+              const mergedText = mergeText(
+                sentText ?? file.serverText ?? file.text,
+                message.code,
+                file.text
+              );
+              const isActive = message.filePath === activePathRef.current;
+              const textarea = textareaRef.current;
+              if (isActive && textarea && mergedText !== file.text) {
+                pendingSelectionRef.current = mapSelection(
+                  file.text,
+                  mergedText,
+                  {
+                    start: textarea.selectionStart,
+                    end: textarea.selectionEnd,
+                  }
+                );
+              }
+
+              file.serverText = message.code;
+              file.text = mergedText;
+
+              if (isActive) {
+                setCode(mergedText);
+              }
+
+              // Only send a follow-up if there are no outstanding writes
+              // and the merged local text differs from the server's version.
+              // A microtask rechecks the latest state before sending.
+              if (file.pending === 0 && mergedText !== message.code) {
+                queueMicrotask(() => {
+                  const latest = filesRef.current.get(message.filePath);
+                  if (
+                    latest === file &&
+                    latest.pending === 0 &&
+                    latest.text !== latest.serverText
+                  ) {
+                    flushFile(message.filePath);
+                  }
+                });
+              }
+            }
+          }
           break;
         }
 
@@ -419,103 +703,198 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
           setTerminalOutput(message.message);
           break;
 
-        case 'ERROR':
+        // The leader submitted; grading is running on the server
+        case 'SUBMISSION_STARTED':
+          setIsSubmitting(true);
+          setTerminalOutput(
+            `${message.username} submitted the code for grading. Running the tests...`
+          );
+          break;
+
+        // The graded report, sent to everyone in the team
+        case 'SUBMISSION_RESULT':
+          setIsSubmitting(false);
+          showSubmissionResult(message.problemId, message.result);
+          break;
+
+        // The event started or ended (also sent once on connecting)
+        case 'EVENT_STATUS':
+          setEventStatus(message.status);
+          break;
+
+        // A rejected edit is never ACKed, so it would leave `pending` above zero
+        // and block remote text forever; drop our copy and fetch the server's
+        case 'ERROR': {
           setTerminalOutput(`Editor error: ${message.error}`);
           setIsFileLoading(false);
+          setIsRunning(false);
+          const file = message.filePath
+            ? filesRef.current.get(message.filePath)
+            : null;
+          if (file?.pending > 0) {
+            // Do not discard local changes when the server rejects a write.
+            file.mergeRejected = true;
+            file.pending = 0;
+            file.sent = [];
+          }
           break;
+        }
 
         default:
           break;
       }
     },
-    [applyRemoteEdit, applyTreeUpdate, flushFile, resetFile, showFile]
+    [
+      applyRemoteEdit,
+      applyTreeUpdate,
+      resetFile,
+      showFile,
+      showSubmissionResult,
+    ]
   );
 
   // Open the socket when the room/problem/url changes and close it on cleanup.
+  // If the connection drops (network blip, server restart) it is reopened with
+  // a growing delay; the server then sends the room again from scratch.
   // `active` guards against callbacks firing after the effect was cleaned up.
   useEffect(() => {
     let active = true;
-    let socket;
+    let socket = null;
+    let retryTimer = null;
+    let retryDelay = MIN_RETRY_MS;
+
+    // Start every room from a clean slate so nothing from the previous room
+    // can be edited (and then lost) while the new one connects
+    filesRef.current = new Map();
+    treeRef.current = null;
+    pendingSelectionRef.current = null;
+    activePathRef.current = DEFAULT_FILE;
+    setTree(null);
+    setCode('');
+    setActiveFilePath(DEFAULT_FILE);
+    setIsConnected(false);
+    setIsReconnecting(false);
+    setEventStatus(null);
+    problemIdRef.current = null;
+    setActiveProblemId(null);
+    setIsReady(false);
+    setIsRunning(false);
+    setIsFileLoading(false);
+
     if (!activeRoomId) {
       setIsConnected(false);
       socketRef.current = null;
       return undefined;
     }
 
-    try {
-      socket = new WebSocket(getWebSocketUrl(wsUrl, activeRoomId, problemId));
-    } catch (error) {
-      setTerminalOutput(`Could not connect to the editor: ${error.message}`);
-      return undefined;
+    function connect() {
+      try {
+        socket = openEditorSocket(wsUrl, activeRoomId);
+      } catch (error) {
+        setTerminalOutput(`Could not connect to the editor: ${error.message}`);
+        return;
+      }
+      const thisSocket = socket;
+      socketRef.current = thisSocket;
+
+      thisSocket.onopen = () => {
+        if (!active) return;
+        retryDelay = MIN_RETRY_MS;
+        setIsConnected(true);
+        setIsReconnecting(false);
+        setTerminalOutput(`Connected to shared room: ${activeRoomId}`);
+        thisSocket.send(JSON.stringify({ type: 'SYNC_INIT' }));
+      };
+
+      thisSocket.onmessage = (event) => {
+        if (!active) return;
+        try {
+          handleIncomingMessage(JSON.parse(event.data));
+        } catch (error) {
+          console.error('Failed to process WebSocket message:', error);
+          setTerminalOutput(
+            'Received an invalid response from the editor server.'
+          );
+        }
+      };
+
+      thisSocket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+      };
+
+      thisSocket.onclose = (event) => {
+        if (!active) return;
+        setIsConnected(false);
+        setIsReady(false);
+        setIsRunning(false);
+
+        if (event.code === 4001) {
+          setTerminalOutput(
+            'Your sign-in has expired. Sign in again to use the editor.'
+          );
+          window.dispatchEvent(new Event('auth:expired'));
+          return;
+        }
+        if (NO_RECONNECT_CODES.has(event.code)) {
+          setTerminalOutput(
+            event.reason
+              ? `Disconnected from the editor server: ${event.reason}`
+              : 'Disconnected from the editor server.'
+          );
+          return;
+        }
+
+        // Anything else is probably temporary: try again shortly. The text is
+        // read-only until then (isReady is false), so nothing is typed into a
+        // connection that can't deliver it.
+        setIsReconnecting(true);
+        setTerminalOutput('Connection lost. Reconnecting...');
+        retryTimer = setTimeout(connect, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
+      };
     }
 
-    socketRef.current = socket;
-
-    socket.onopen = () => {
-      if (!active) return;
-      setIsConnected(true);
-      setTerminalOutput(`Connected to shared room: ${activeRoomId}`);
-      socket.send(JSON.stringify({ type: 'SYNC_INIT' }));
-    };
-
-    socket.onmessage = (event) => {
-      if (!active) return;
-      try {
-        handleIncomingMessage(JSON.parse(event.data));
-      } catch (error) {
-        console.error('Failed to process WebSocket message:', error);
-        setTerminalOutput(
-          'Received an invalid response from the editor server.'
-        );
-      }
-    };
-
-    socket.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      if (active) {
-        setTerminalOutput(
-          'WebSocket connection failed. Check the server and sign-in.'
-        );
-      }
-    };
-
-    socket.onclose = (event) => {
-      if (!active) return;
-      setIsConnected(false);
-      setIsReady(false);
-      setTerminalOutput(
-        event.code === 4001
-          ? 'Your sign-in has expired. Sign in again to use the editor.'
-          : 'Disconnected from the editor server.'
-      );
-    };
+    connect();
 
     return () => {
       active = false;
-      socket.close();
+      clearTimeout(retryTimer);
+      socket?.close();
       if (socketRef.current === socket) socketRef.current = null;
     };
-  }, [activeRoomId, handleIncomingMessage, problemId, wsUrl]);
+  }, [activeRoomId, handleIncomingMessage, wsUrl]);
+
+  useEffect(() => {
+    if (!groupId) {
+      setProblems([]);
+      return undefined;
+    }
+    let active = true;
+    api(`/groups/${groupId}/problems`)
+      .then((data) => active && setProblems(data.problems ?? []))
+      .catch(() => active && setProblems([]));
+    return () => {
+      active = false;
+    };
+  }, [groupId, eventStatus]);
 
   // Applies a local change immediately, then syncs it to the server.
-  // `cursorPosition` restores the caret after React re-renders the textarea.
-  const applyLocalEdit = (updatedCode, cursorPosition) => {
+  // `cursor` (a caret position, or a { start, end } selection) is restored
+  // after React re-renders the textarea.
+  const applyLocalEdit = (updatedCode, cursor) => {
     const filePath = activePathRef.current;
     const file = filesRef.current.get(filePath);
     if (!file) return;
 
     if (updatedCode === file.text) return;
-    // The change since the previous text, added to anything not yet sent
-    const op = diffToOp(file.text, updatedCode);
-    file.buffer = file.buffer ? compose(file.buffer, op) : op;
     file.text = updatedCode;
     setCode(updatedCode);
     flushFile(filePath);
 
-    if (cursorPosition !== undefined) {
-      requestAnimationFrame(() => {
-        textareaRef.current?.setSelectionRange(cursorPosition, cursorPosition);
-      });
+    // Restored by the layout effect once React has written the new text
+    if (cursor !== undefined) {
+      pendingSelectionRef.current =
+        typeof cursor === 'number' ? { start: cursor, end: cursor } : cursor;
     }
   };
 
@@ -526,15 +905,33 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
 
   // Switches the active file. Files we already hold are shown straight away
   // (the server's broadcasts keep them live); others are requested first.
-  const handleSelectFile = (filePath) => {
-    if (filePath === activePathRef.current) return;
-    showFile(filePath);
-  };
+  const handleSelectFile = useCallback(
+    (filePath) => {
+      if (filePath === activePathRef.current) return;
+      showFile(filePath);
+    },
+    [showFile]
+  );
 
   // Asks the server to create/rename/delete/move a file or folder; the change
   // appears when the server's TREE_UPDATE comes back
-  const handleTreeOperation = (operation) => {
-    sendWsMessage({ type: 'TREE_OPERATION', operation });
+  const handleTreeOperation = useCallback(
+    (operation) => {
+      sendWsMessage({
+        type: 'TREE_OPERATION',
+        problemId: problemIdRef.current,
+        operation,
+      });
+    },
+    [sendWsMessage]
+  );
+
+  // The highlighted copy sits behind the textarea; keep it scrolled to match
+  const handleScroll = (event) => {
+    const highlight = highlightRef.current;
+    if (!highlight) return;
+    highlight.scrollTop = event.target.scrollTop;
+    highlight.scrollLeft = event.target.scrollLeft;
   };
 
   // Python-friendly editing behaviour: Tab inserts 4 spaces, Backspace removes
@@ -545,15 +942,26 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
 
     const { selectionStart, selectionEnd, value } = textarea;
 
-    // Tab -> insert four spaces instead of moving focus
+    // Tab -> indent instead of moving focus. With a selection (or Shift+Tab)
+    // whole lines are indented/outdented, so selected text is never replaced.
     if (event.key === 'Tab') {
       event.preventDefault();
-      const indentation = '    ';
+      if (event.shiftKey || selectionStart !== selectionEnd) {
+        const shifted = shiftLines(
+          value,
+          selectionStart,
+          selectionEnd,
+          event.shiftKey
+        );
+        applyLocalEdit(shifted.value, {
+          start: shifted.selectionStart,
+          end: shifted.selectionEnd,
+        });
+        return;
+      }
       const next =
-        value.slice(0, selectionStart) +
-        indentation +
-        value.slice(selectionEnd);
-      applyLocalEdit(next, selectionStart + indentation.length);
+        value.slice(0, selectionStart) + INDENT + value.slice(selectionEnd);
+      applyLocalEdit(next, selectionStart + INDENT.length);
       return;
     }
 
@@ -578,59 +986,115 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
     }
 
     // Enter -> auto-indent: copy the current line's indentation, add a level
-    // after a line ending in ':', and dedent for else/elif/except/finally/case
-    if (event.key !== 'Enter') return;
+    // after a line ending in ':', and remove one after return/pass/break/...
+    if (
+      event.key !== 'Enter' ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.altKey ||
+      event.nativeEvent.isComposing
+    ) {
+      return;
+    }
     event.preventDefault();
 
     const lineStart = value.lastIndexOf('\n', selectionStart - 1) + 1;
     const lineBeforeCursor = value.slice(lineStart, selectionStart);
-    const indentation = lineBeforeCursor.match(/^[\t ]*/)?.[0] || '';
-    const trimmedLine = lineBeforeCursor.trimStart();
-    const dedent = /^(?:else|elif\b|except\b|finally\b|case\b)/.test(
-      trimmedLine
-    );
-    const currentIndent = dedent
-      ? indentation.slice(0, Math.max(0, indentation.length - 4))
-      : indentation;
-    const opensBlock = /:\s*(?:#.*)?$/.test(lineBeforeCursor);
-    const nextIndent = currentIndent + (opensBlock && !dedent ? '    ' : '');
-    const inserted = `\n${nextIndent}`;
+    const inserted = `\n${nextLineIndentation(lineBeforeCursor)}`;
     const next =
       value.slice(0, selectionStart) + inserted + value.slice(selectionEnd);
     applyLocalEdit(next, selectionStart + inserted.length);
   };
 
-  // Asks the server to run the current file; the result arrives as RUN_RESULTS
+  // Asks the server to run the team's code against the visible test cases;
+  // the results arrive as RUN_RESULTS
   const handleRunCode = () => {
     const requestId = `run-${Date.now()}-${++requestCounterRef.current}`;
     if (
       sendWsMessage({
         type: 'RUN_CODE',
         requestId,
-        filePath: activePathRef.current,
-        code: filesRef.current.get(activePathRef.current)?.text ?? '',
       })
     ) {
       setIsRunning(true);
-      setTerminalOutput('Running Python code...');
+      setTerminalOutput('Running the visible test cases...');
     }
   };
+
+  // Leader only: grade the team's saved code for the current problem via
+  // @Thando's POST /api/submit. The room also gets the result over the socket.
+  const handleSubmit = async () => {
+    const ok = window.confirm(
+      `Submit the current code for "${activeProblem?.title ?? 'this problem'}"?`
+    );
+    if (!ok) return;
+    const problemId = activeProblemId;
+    setIsSubmitting(true);
+    setTerminalOutput('Submitting...');
+    try {
+      const result = await api('/submit', {
+        method: 'POST',
+        body: { teamId, problemId },
+      });
+      showSubmissionResult(problemId, result);
+    } catch (error) {
+      showSubmissionResult(problemId, { success: false, error: error.message });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const attemptsLeft =
+    timeline.submissionLimit > 0
+      ? Math.max(0, timeline.submissionLimit - timeline.used)
+      : null;
+
+  // Leader only: switch the whole team to another problem
+  const handleSelectProblem = (event) => {
+    const problemId = Number(event.target.value);
+    if (problemId && problemId !== problemIdRef.current) {
+      sendWsMessage({ type: 'SELECT_PROBLEM', problemId });
+    }
+  };
+
+  // The code can only be changed once the room is loaded and the event is on
+  const isEditable = isReady && eventStatus === 'running';
+  const readOnlyNotice =
+    isConnected && eventStatus ? READ_ONLY_NOTICES[eventStatus] : null;
+
+  // With no room there is no socket to report on, so say what is needed
+  const statusText =
+    activeRoomId || teamsLoading
+      ? terminalOutput
+      : teamsError
+        ? 'Could not load your teams.'
+        : 'You are not in a team yet. Create or join one on a group page to start coding.';
 
   return (
     <div className="editor page-enter">
       <header className="editor-header">
         <div className="editor-title">
-          <p className="editor-brand">The Hackathon</p>
+          <p className="editor-brand">
+            The Hackathon
+            {selectedTeam?.group?.name ? `: ${selectedTeam.group.name}` : ''}
+          </p>
           <div className="editor-status">
             <span
               className={`status-indicator ${isConnected ? 'connected' : 'disconnected'}`}
               aria-hidden="true"
             />
             <span role="status">
-              {isConnected ? 'Connected' : 'Disconnected'}
+              {isConnected
+                ? 'Connected'
+                : isReconnecting
+                  ? 'Reconnecting...'
+                  : 'Disconnected'}
             </span>
-            <span className="room-label">
-              Room: {activeRoomId || 'No team selected'}
+          </div>
+          <div className="editor-room">
+            <span className="editor-room-label">Room: </span>
+            <span className="editor-room-value">
+              {activeRoomId || 'No team selected'}
             </span>
           </div>
           <div className="editor-team-selector">
@@ -638,6 +1102,7 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
 
             <select
               id="editor-team-select"
+              className="editor-team-select"
               value={selectedTeamId}
               onChange={(event) => setSelectedTeamId(event.target.value)}
               disabled={teamsLoading || teams.length === 0}
@@ -669,52 +1134,157 @@ export default function CodeEditor({ roomId, problemId = 'prob-1', wsUrl }) {
             className="editor-btn editor-btn-primary"
             type="button"
             onClick={handleRunCode}
-            disabled={!isReady || isRunning || isFileLoading}
+            disabled={!isEditable || isRunning || isFileLoading}
           >
             {isRunning ? 'Running...' : 'Run Python'}
           </button>
-          <button
-            className="editor-btn"
-            type="button"
-            disabled
-            title="Grading will be added later."
-          >
-            Submit solution (coming soon)
-          </button>
+          {isLeader ? (
+            <button
+              className="editor-btn"
+              type="button"
+              onClick={handleSubmit}
+              disabled={
+                !isReady ||
+                isSubmitting ||
+                eventStatus !== 'running' ||
+                !activeProblemId ||
+                attemptsLeft === 0
+              }
+            >
+              {isSubmitting ? 'Grading...' : 'Submit solution'}
+            </button>
+          ) : (
+            selectedTeam && (
+              <span className="editor-hint">
+                Only the team leader can submit.
+              </span>
+            )
+          )}
         </div>
       </header>
 
+      {readOnlyNotice && (
+        <p className="editor-notice" role="status">
+          {readOnlyNotice}
+        </p>
+      )}
+
+      {activeRoomId && eventStatus && eventStatus !== 'not-started' && (
+        <section className="editor-problem" aria-label="Current problem">
+          <div className="editor-problem-bar">
+            <label htmlFor="editor-problem-select">Problem: </label>
+            <select
+              id="editor-problem-select"
+              className="editor-team-select"
+              value={activeProblemId ?? ''}
+              onChange={handleSelectProblem}
+              disabled={!isLeader || !isConnected || problems.length === 0}
+            >
+              {!activeProblem && <option value="">—</option>}
+              {problems.map((problem) => (
+                <option key={problem.id} value={problem.id}>
+                  {problem.orderIndex + 1}. {problem.title}
+                </option>
+              ))}
+            </select>
+            <span className="editor-hint">
+              {isLeader
+                ? 'You choose the problem for the whole team.'
+                : 'The team leader chooses the problem.'}
+              {attemptsLeft !== null &&
+                ` ${attemptsLeft} of ${timeline.submissionLimit} attempts left.`}
+            </span>
+          </div>
+
+          {activeProblem && (
+            <div className="editor-problem-details">
+              <h2 className="editor-problem-title">{activeProblem.title}</h2>
+              <p className="editor-problem-text">{activeProblem.description}</p>
+              {(activeProblem.inputFormat || activeProblem.outputFormat) && (
+                <dl className="editor-problem-formats">
+                  {activeProblem.inputFormat && (
+                    <div>
+                      <dt>Input</dt>
+                      <dd>{activeProblem.inputFormat}</dd>
+                    </div>
+                  )}
+                  {activeProblem.outputFormat && (
+                    <div>
+                      <dt>Output</dt>
+                      <dd>{activeProblem.outputFormat}</dd>
+                    </div>
+                  )}
+                </dl>
+              )}
+              <p className="editor-hint">
+                Your main.py is run and its main() function is called. Read
+                input with input() and print the answer.
+              </p>
+            </div>
+          )}
+        </section>
+      )}
+
       <div className="editor-body">
         <aside className="editor-sidebar">
-          <FileTree
-            tree={tree}
-            onOperation={handleTreeOperation}
-            onSelectFile={handleSelectFile}
-            selectedPath={activeFilePath}
-          />
+          {activeRoomId || teamsLoading ? (
+            <FileTree
+              tree={tree}
+              onOperation={handleTreeOperation}
+              onSelectFile={handleSelectFile}
+              selectedPath={activeFilePath}
+              readOnly={eventStatus !== 'running'}
+            />
+          ) : (
+            <p className="editor-no-team">No team selected.</p>
+          )}
         </aside>
 
         <main className="editor-workspace">
           <div className="active-tab">{activeFilePath || 'No file open'}</div>
-          <textarea
-            ref={textareaRef}
-            value={code}
-            onChange={handleInput}
-            onKeyDown={handleKeyDown}
-            placeholder="Write Python code here..."
-            spellCheck={false}
-            className="code-input"
-            aria-label={`Python source code in ${activeFilePath}`}
-            disabled={!isReady || isFileLoading}
-          />
+          {/* Syntax highlighting: a coloured copy of the code is drawn in a
+              <pre> behind a textarea whose own text is transparent, so typing,
+              selection and the caret all still come from the real textarea */}
+          <div className="code-editor-area">
+            <pre
+              ref={highlightRef}
+              className="code-highlight"
+              aria-hidden="true"
+              dangerouslySetInnerHTML={{ __html: highlightPython(code) }}
+            />
+            <textarea
+              ref={textareaRef}
+              value={code}
+              onChange={handleInput}
+              onKeyDown={handleKeyDown}
+              onScroll={handleScroll}
+              placeholder="Write Python code here..."
+              spellCheck={false}
+              wrap="off"
+              className="code-input"
+              aria-label={`Python source code in ${activeFilePath}`}
+              disabled={!isReady || isFileLoading}
+              readOnly={!isEditable}
+            />
+          </div>
           <section className="terminal-panel" aria-label="Execution output">
             <div className="terminal-header">Python output</div>
             <pre className="terminal-content" role="status">
-              {terminalOutput}
+              {statusText}
             </pre>
           </section>
         </main>
       </div>
+      {activeRoomId && activeProblemId && (
+        <div className="editor-results">
+          <ResponseArea submission={shownSubmission} />
+          <SubmissionTimeline
+            submissions={timeline.submissions}
+            selectedId={shownSubmission?.id}
+            onSelect={setShownSubmission}
+          />
+        </div>
+      )}
     </div>
   );
 }

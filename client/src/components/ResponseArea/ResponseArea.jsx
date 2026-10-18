@@ -112,7 +112,7 @@ export default function ResponseArea({ submission }) {
 
         <div>
           <span>Score P</span>
-          <strong>{evaluation.passPercentage.toFixed(2)}%</strong>
+          <strong>{Number(evaluation.passPercentage ?? 0).toFixed(2)}%</strong>
         </div>
 
         <div>
@@ -126,7 +126,7 @@ export default function ResponseArea({ submission }) {
       )}
 
       <div className="test-results">
-        {evaluation.results.map((result, index) => (
+        {(evaluation.results ?? []).map((result, index) => (
           <TestResult
             key={`${index}-${result.hidden}-${result.runtimeMs}`}
             result={result}

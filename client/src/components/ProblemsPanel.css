@@ -11,7 +11,7 @@
 .problem-card {
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 14px;
+  padding: 16px 18px;
   counter-increment: problem;
 }
 
@@ -23,10 +23,56 @@
   color: var(--text-h);
 }
 
-.problem-head strong::before {
+.problems-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.problems-heading h2 {
+  margin: 0;
+}
+
+.problem-head {
+  align-items: center;
+}
+
+.problem-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  color: var(--text-h);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.problem-title:hover .problem-title-text {
+  color: var(--accent);
+}
+
+.problem-title-text::before {
   content: counter(problem) '. ';
   color: var(--text);
   font-weight: 400;
+}
+
+.problem-chevron {
+  width: 14px;
+  color: var(--text);
+}
+
+.problem-body {
+  margin-top: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
 
 .problem-actions {
@@ -44,34 +90,74 @@
   cursor: not-allowed;
 }
 
-.problem-desc {
-  margin: 8px 0;
-  white-space: pre-wrap;
+.problem-section {
+  margin: 0 0 18px;
 }
 
+.problem-label {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.problem-desc {
+  margin: 0;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: var(--text-h);
+}
+
+/* Input and output sit in their own panels, one under the other */
 .problem-formats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
-  margin: 10px 0;
+}
+
+.problem-formats > div {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--code-bg);
 }
 
 .problem-formats dt {
-  font-size: 13px;
-  color: var(--text);
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
 }
 
 .problem-formats dd {
-  margin: 2px 0 0;
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
   color: var(--text-h);
   white-space: pre-wrap;
 }
 
+.problem-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.problem-limit {
+  font-size: 14px;
+  color: var(--text);
+}
+
 /* ---- Test cases ---- */
 .test-block {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
+  margin-top: 16px;
 }
 
 .test-table {
@@ -179,5 +265,69 @@ label.checkbox input {
 @media (prefers-color-scheme: dark) {
   .link-button.danger {
     color: #f97066;
+  }
+}
+
+/* Rounded bubble buttons: show/hide test cases and delete */
+.problem-pill {
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.problem-pill:hover {
+  filter: brightness(0.95);
+}
+
+.problem-pill.danger {
+  color: #b91c1c;
+  background: rgba(239, 68, 68, 0.12);
+}
+
+/* Expand / collapse animation: grid rows animate between 0fr and 1fr */
+.collapsible {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    grid-template-rows 0.25s ease,
+    opacity 0.25s ease,
+    visibility 0s linear 0.25s;
+}
+
+.collapsible.open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition:
+    grid-template-rows 0.25s ease,
+    opacity 0.25s ease,
+    visibility 0s;
+}
+
+.collapsible-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .collapsible,
+  .collapsible.open {
+    transition: none;
+  }
+}
+
+/* Lighter red so the delete bubble stays readable on dark backgrounds */
+@media (prefers-color-scheme: dark) {
+  .problem-pill.danger {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.15);
   }
 }

@@ -14,7 +14,8 @@ const MAX_STDIN_BYTES = 64 * 1024;
 export async function executePython(
   code,
   stdin = '',
-  timeoutMs = DEFAULT_TIMEOUT_MS
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  options = {}
 ) {
   if (process.env.ENABLE_PYTHON_EXECUTION !== 'true') {
     throw new Error('Python execution is disabled.');
@@ -35,7 +36,13 @@ export async function executePython(
       mode: 0o600,
     });
 
-    return await executePythonFile('main.py', stdin, timeoutMs, directory);
+    return await executePythonFile(
+      'main.py',
+      stdin,
+      timeoutMs,
+      directory,
+      options
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -48,7 +55,8 @@ export async function executePythonFile(
   filePath,
   stdin = '',
   timeoutMs = DEFAULT_TIMEOUT_MS,
-  cwd
+  cwd,
+  options = {}
 ) {
   if (process.env.ENABLE_PYTHON_EXECUTION !== 'true') {
     throw new Error('Python execution is disabled.');
@@ -61,5 +69,5 @@ export async function executePythonFile(
     throw new Error('Invalid Python input.');
   }
 
-  return executeDockerPythonFile(filePath, stdin, timeoutMs, cwd);
+  return executeDockerPythonFile(filePath, stdin, timeoutMs, cwd, options);
 }

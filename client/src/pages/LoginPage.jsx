@@ -55,7 +55,9 @@ export default function LoginPage() {
 
         {expired && isLogin && (
           <p className="auth-notice" role="status">
-            You have been inactive for 30 mins and have been signed out
+            {expired === 'idle'
+              ? 'You have been inactive for 30 mins and have been signed out.'
+              : 'Your session has expired. Please sign in again.'}
           </p>
         )}
 
