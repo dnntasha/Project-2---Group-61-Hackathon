@@ -10,10 +10,8 @@ import {
 const router = Router();
 
 /*
- * Returns true if candidate is a better submission than current.
- *
- * Higher P is better.
- * If P ties, lower T is better.
+ * Returns true if the candidate submission is better.
+ * Higher P is better, then lower T.
  */
 function isBetterSubmission(candidate, current) {
   if (!current) return true;
@@ -32,8 +30,7 @@ function isBetterSubmission(candidate, current) {
 }
 
 /*
- * Takes Submission rows and keeps the best completed submission
- * for each team/problem pair.
+ * Keeps the best completed submission for each team/problem pair.
  */
 function getBestSubmissions(submissions) {
   const best = new Map();
@@ -135,7 +132,7 @@ router.get(
 /*
  * GET /api/leaderboards/groups/:groupId/final
  *
- * Final leaderboard calculated according to Section 12.
+ * Final leaderboard. This is only available after the event ends.
  */
 router.get(
   '/groups/:groupId/final',
@@ -160,6 +157,8 @@ router.get(
           id: true,
           name: true,
           topK: true,
+          startedAt: true,
+          durationMin: true,
 
           teams: {
             select: {
@@ -173,6 +172,24 @@ router.get(
       if (!group) {
         return res.status(404).json({
           error: 'Group not found.',
+        });
+      }
+
+      // Final rankings are only available once the event has finished.
+      if (!group.startedAt) {
+        return res.status(409).json({
+          error:
+            'The final leaderboard is only available after the event ends.',
+        });
+      }
+
+      const endsAt =
+        new Date(group.startedAt).getTime() + group.durationMin * 60 * 1000;
+
+      if (Date.now() < endsAt) {
+        return res.status(409).json({
+          error:
+            'The final leaderboard is only available after the event ends.',
         });
       }
 
@@ -202,15 +219,10 @@ router.get(
         },
       });
 
-      /*
-       * First select each team's best completed submission
-       * for each problem.
-       */
+      // Select the best submission for each team/problem pair.
       const bestSubmissions = getBestSubmissions(submissions);
 
-      /*
-       * Group the best submissions by problem.
-       */
+      // Group submissions by problem.
       const submissionsByProblem = new Map();
 
       for (const submission of bestSubmissions) {
@@ -221,14 +233,7 @@ router.get(
         submissionsByProblem.get(submission.problemId).push(submission);
       }
 
-      /*
-       * Build a proper leaderboard for every problem.
-       *
-       * buildProblemLeaderboard handles:
-       * - P descending
-       * - T ascending
-       * - equal scores sharing the same position
-       */
+      // Build the leaderboard for every problem.
       const problemLeaderboards = new Map();
 
       for (const [problemId, problemSubmissions] of submissionsByProblem) {
@@ -244,18 +249,8 @@ router.get(
         problemLeaderboards.set(problemId, leaderboard);
       }
 
-      /*
-       * Convert each team's problem results into the format expected
-       * by buildFinalLeaderboard().
-       *
-       * Each problem contributes:
-       * position
-       * submittingTeams
-       *
-       * The service then calculates:
-       *
-       * score_i = (position - 1) / (submittingTeams - 1)
-       */
+      // Convert the problem rankings into the format used by
+      // buildFinalLeaderboard().
       const teamsForFinalLeaderboard = group.teams.map((team) => {
         const problems = [];
 
@@ -304,7 +299,6 @@ router.get(
 /*
  * Old manual routes kept so existing tests/code continue to work.
  */
-
 router.post('/problem', requireAuth, (req, res) => {
   const { scores } = req.body;
 
