@@ -492,6 +492,9 @@ export default function CodeEditor({ roomId, wsUrl }) {
           const rejectedFiles = [...previousFiles.entries()].filter(
             ([, file]) => file.mergeRejected
           );
+          const pendingFiles = [...previousFiles.entries()].filter(
+            ([, file]) => file.pending > 0 && !file.mergeRejected
+          );
           if (unsynced > 0 && !switchedProblem) {
             setTerminalOutput(
               `Reconnected. ${unsynced} file${unsynced === 1 ? '' : 's'} had changes that could not be sent and were reset to the team's version.`
@@ -502,6 +505,67 @@ export default function CodeEditor({ roomId, wsUrl }) {
           setTree(message.tree);
           for (const [filePath, text] of Object.entries(message.files || {})) {
             resetFile(filePath, text);
+          }
+
+          if (!switchedProblem && pendingFiles.length > 0) {
+            let recovered = 0;
+            let conflicts = 0;
+
+            for (const [filePath, previous] of pendingFiles) {
+              const current = filesRef.current.get(filePath);
+              if (!current) continue;
+
+              try {
+                if (previous.serverText !== current.serverText) {
+                  // The server changed while we were disconnected.
+                  // Preserve the local edit without automatically overwriting
+                  // a teammate's changes.
+                  throw new Error('Server changed during reconnection');
+                }
+
+                const merged = mergeText(
+                  previous.serverText,
+                  current.serverText,
+                  previous.text
+                );
+                current.text = merged;
+                current.pending = 0;
+                current.sent = [];
+
+                if (merged !== current.serverText) {
+                  recovered++;
+                  if (filePath === activePathRef.current) {
+                    setCode(merged);
+                  }
+                  queueMicrotask(() => {
+                    if (
+                      filesRef.current.get(filePath) === current &&
+                      current.pending === 0 &&
+                      !current.mergeRejected &&
+                      current.text !== current.serverText
+                    ) {
+                      flushFile(filePath);
+                    }
+                  });
+                }
+              } catch {
+                current.text = previous.text;
+                current.pending = 0;
+                current.sent = [];
+                current.mergeRejected = true;
+                conflicts++;
+
+                if (filePath === activePathRef.current) {
+                  setCode(previous.text);
+                }
+              }
+            }
+
+            if (recovered || conflicts) {
+              setTerminalOutput(
+                `Reconnected: ${recovered} file(s) recovering unsaved edits; ${conflicts} file(s) require manual recovery.`
+              );
+            }
           }
 
           if (!switchedProblem && rejectedFiles.length > 0) {
