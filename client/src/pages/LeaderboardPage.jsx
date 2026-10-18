@@ -9,7 +9,7 @@ export default function LeaderboardPage() {
 
   // Problems for the selected group
   const [problems, setProblems] = useState([]);
-  const [viewType, setViewType] = useState('final');
+  const [viewType, setViewType] = useState('problem');
   const [problemId, setProblemId] = useState('');
 
   // Current leaderboard data returned by the server
@@ -21,6 +21,12 @@ export default function LeaderboardPage() {
 
   const [error, setError] = useState('');
 
+  const selectedGroup = groups.find(
+    (group) => String(group.id) === String(groupId)
+  );
+
+  const finalAvailable = hasEventEnded(selectedGroup);
+
   // Load the user's groups when the page opens
   useEffect(() => {
     api('/groups')
@@ -29,9 +35,13 @@ export default function LeaderboardPage() {
 
         setGroups(userGroups);
 
-        // Select the first group by default
         if (userGroups.length > 0) {
-          setGroupId(String(userGroups[0].id));
+          const firstGroup = userGroups[0];
+
+          setGroupId(String(firstGroup.id));
+
+          // Final leaderboard only becomes the default once the event ends
+          setViewType(hasEventEnded(firstGroup) ? 'final' : 'problem');
         }
       })
       .catch((err) => setError(err.message))
@@ -80,6 +90,12 @@ export default function LeaderboardPage() {
       return;
     }
 
+    // Do not request the final leaderboard before the event ends
+    if (viewType === 'final' && !finalAvailable) {
+      setLeaderboard(null);
+      return;
+    }
+
     setError('');
     setLoadingLeaderboard(true);
 
@@ -95,14 +111,21 @@ export default function LeaderboardPage() {
         setError(err.message);
       })
       .finally(() => setLoadingLeaderboard(false));
-  }, [groupId, viewType, problemId]);
+  }, [groupId, viewType, problemId, finalAvailable]);
 
   function handleGroupChange(e) {
-    setGroupId(e.target.value);
+    const newGroupId = e.target.value;
 
-    // Return to the final leaderboard when switching groups
-    setViewType('final');
+    setGroupId(newGroupId);
+
+    const newGroup = groups.find(
+      (group) => String(group.id) === String(newGroupId)
+    );
+
+    // Problem leaderboard is shown until the event has ended
+    setViewType(hasEventEnded(newGroup) ? 'final' : 'problem');
     setLeaderboard(null);
+    setError('');
   }
 
   return (
@@ -144,11 +167,17 @@ export default function LeaderboardPage() {
                 onChange={(e) => {
                   setViewType(e.target.value);
                   setLeaderboard(null);
+                  setError('');
                 }}
                 disabled={!groupId}
               >
-                <option value="final">Final leaderboard</option>
                 <option value="problem">Problem leaderboard</option>
+
+                <option value="final" disabled={!finalAvailable}>
+                  {finalAvailable
+                    ? 'Final leaderboard'
+                    : 'Final leaderboard (available after event)'}
+                </option>
               </select>
             </label>
 
@@ -202,6 +231,13 @@ export default function LeaderboardPage() {
               This group does not have any problems yet.
             </p>
           )}
+
+        {/* Final leaderboard is only available after the event */}
+        {!loadingLeaderboard && viewType === 'final' && !finalAvailable && (
+          <p className="leaderboard-muted">
+            The final leaderboard will be available once the event has ended.
+          </p>
+        )}
 
         {/* Final group leaderboard */}
         {!loadingLeaderboard && leaderboard && viewType === 'final' && (
@@ -314,6 +350,30 @@ function ProblemLeaderboard({ data, problem }) {
       )}
     </section>
   );
+}
+
+// Checks whether the selected group's event has finished
+function hasEventEnded(group) {
+  if (!group?.startedAt) {
+    return false;
+  }
+
+  if (group.status === 'ended') {
+    return true;
+  }
+
+  if (group.endsAt) {
+    return Date.now() >= new Date(group.endsAt).getTime();
+  }
+
+  if (Number.isFinite(group.durationMin)) {
+    const endsAt =
+      new Date(group.startedAt).getTime() + group.durationMin * 60 * 1000;
+
+    return Date.now() >= endsAt;
+  }
+
+  return false;
 }
 
 // Keep final scores readable
