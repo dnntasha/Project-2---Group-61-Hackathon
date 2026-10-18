@@ -261,9 +261,14 @@ router.post('/', requireAuth, async (req, res, next) => {
       },
     });
 
-    const isAdmin = group.adminId === req.user.id;
+    // The admin runs the event and does not take part in it
+    if (group.adminId === req.user.id) {
+      return res.status(403).json({
+        error: 'The group admin cannot create or join teams.',
+      });
+    }
 
-    if (!membership && !isAdmin) {
+    if (!membership) {
       return res.status(403).json({
         error: 'You must be a member of the group to create a team.',
       });
@@ -406,9 +411,14 @@ router.post('/:teamId/invites', requireAuth, async (req, res, next) => {
       },
     });
 
-    const isGroupAdmin = team.group.adminId === userId;
+    // The admin runs the event and does not take part in it
+    if (team.group.adminId === userId) {
+      return res.status(400).json({
+        error: 'The group admin cannot be invited to a team.',
+      });
+    }
 
-    if (!groupMember && !isGroupAdmin) {
+    if (!groupMember) {
       return res.status(400).json({
         error: 'The user must belong to the same group.',
       });
@@ -608,6 +618,13 @@ router.post(
       if (hasStarted(invite.team.group)) {
         return res.status(409).json({
           error: 'The event has already started, so you cannot join this team.',
+        });
+      }
+
+      // Covers an invitation sent before the group's admin was barred from teams
+      if (invite.team.group.adminId === req.user.id) {
+        return res.status(403).json({
+          error: 'The group admin cannot create or join teams.',
         });
       }
 

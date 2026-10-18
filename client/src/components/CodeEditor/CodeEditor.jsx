@@ -5,6 +5,8 @@ import {
   useRef,
   useState,
 } from 'react';
+import Prism from 'prismjs';
+import 'prismjs/components/prism-python.js';
 import { useSearchParams } from '../../router.jsx';
 import FileTree from '../FileTree/FileTree.jsx';
 import ResponseArea from '../ResponseArea/ResponseArea.jsx';
@@ -12,13 +14,6 @@ import SubmissionTimeline from '../SubmissionTimeline/SubmissionTimeline.jsx';
 import { api, getToken } from '../../api.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { getFilePathsById } from '../FileTree/fileTreeUtils.js';
-import {
-  applyOp,
-  compose,
-  diffToOp,
-  transform,
-  transformIndex,
-} from '../../../../server/lib/textOp.js';
 import { INDENT, nextLineIndentation, shiftLines } from './indentation.js';
 import './CodeEditor.css';
 
@@ -57,6 +52,15 @@ function getSubmissionSummary(result) {
   if (!result.success) return `Submission failed: ${result.error}`;
   const { passedTests, totalTests } = result.evaluation;
   return `Submission graded: ${passedTests}/${totalTests} tests passed. See the report below.`;
+}
+
+// Turns code into HTML with <span class="token ..."> around keywords, strings,
+// comments and so on (Prism's Python grammar). Prism escapes the text itself,
+// so the result is safe to insert as HTML. The trailing newline gives the
+// highlighted copy the same final empty line the textarea shows.
+function highlightPython(code) {
+  return `${Prism.highlight(code, Prism.languages.python, 'python')}
+`;
 }
 
 // What to tell the user while the code is read-only
@@ -103,17 +107,23 @@ function getRunOutput(message) {
  * with the other users in the same room, so several people can type in the
  * same file at the same time and see each other's changes live.
  *
- * How syncing works (client side of operational transformation, see
- * lib/textOp.js):
- *  - For each file we track the last server `revision` we have seen, at most
- *    one `outstanding` operation that was sent but not yet acknowledged, a
- *    `buffer` operation holding everything typed since then, and `text` (what
- *    the user currently sees).
- *  - Typing updates `text` immediately and is added to the buffer. If nothing
- *    is outstanding, the buffer is sent; otherwise it waits for the ACK.
- *  - A remote operation is transformed against our outstanding and buffered
- *    changes before it is applied, so nobody's typing is overwritten, and the
- *    caret is shifted so it stays where the user was working.
+ * How syncing works (LAST-WRITE-WINS; this replaced operational transform):
+ *  - For each file we track `text` (what the user currently sees) and
+ *    `pending`, the number of edits we sent that the server has not yet
+ *    acknowledged with an ACK.
+ *  - Typing updates `text` immediately and sends the file's FULL new text to
+ *    the server (TEXT_EDIT { filePath, code }), which stores it as the file's
+ *    contents and relays it to everyone else. There are no operations, no
+ *    revision numbers and no merging: whoever's write reaches the server last
+ *    replaces the file for the whole team.
+ *  - A remote TEXT_EDIT carries the full text and simply replaces ours. The
+ *    one exception: while `pending > 0` we ignore remote text. The server
+ *    handles messages in order, so a remote write that arrives before our ACK
+ *    was processed BEFORE ours and ours wins; dropping it keeps this client
+ *    identical to the server. (Applying it would leave us showing the other
+ *    user's text while the server holds ours.)
+ *  - The caret keeps its numeric position (clamped to the new length) when
+ *    remote text replaces the file; it is not smartly shifted any more.
  *
  * The file tree is shared the same way, but simpler: file/folder operations go
  * to the server, which applies them and sends the whole tree back to everyone.
@@ -213,9 +223,10 @@ export default function CodeEditor({ roomId, wsUrl }) {
   // Refs hold values that message handlers need to read the *latest* value of
   // without being re-created (or triggering renders) on every change.
   const textareaRef = useRef(null);
+  const highlightRef = useRef(null);
   const socketRef = useRef(null);
   const activePathRef = useRef(activeFilePath);
-  // filePath -> { revision, outstanding, buffer, text } (see above)
+  // filePath -> { text, pending } (see above)
   const filesRef = useRef(new Map());
   // The latest tree received, readable from message handlers
   const treeRef = useRef(null);
@@ -304,24 +315,22 @@ export default function CodeEditor({ roomId, wsUrl }) {
     return false;
   }, []);
 
-  // Sends the user's buffered changes to the server, but only when no earlier
-  // operation is still awaiting its ACK (one in flight at a time keeps the
-  // transform logic simple and the server's view unambiguous)
+  // Sends the file's full current text to the server (last-write-wins: the
+  // server just overwrites its copy with this). Every send is counted in
+  // `pending` until the server's ACK comes back, see the ACK case below.
   const flushFile = useCallback(
     (filePath) => {
       const file = filesRef.current.get(filePath);
-      if (!file || file.outstanding || !file.buffer) return;
+      if (!file) return;
       if (
         sendWsMessage({
           type: 'TEXT_EDIT',
           problemId: problemIdRef.current,
           filePath,
-          op: file.buffer,
-          baseRevision: file.revision,
+          code: file.text,
         })
       ) {
-        file.outstanding = file.buffer;
-        file.buffer = null;
+        file.pending += 1;
       }
     },
     [sendWsMessage]
@@ -329,13 +338,8 @@ export default function CodeEditor({ roomId, wsUrl }) {
 
   // Replaces our whole record of a file with the server's version, and shows
   // it if it is the active file
-  const resetFile = useCallback((filePath, text, revision) => {
-    filesRef.current.set(filePath, {
-      revision,
-      outstanding: null,
-      buffer: null,
-      text,
-    });
+  const resetFile = useCallback((filePath, text) => {
+    filesRef.current.set(filePath, { text, pending: 0 });
     if (filePath === activePathRef.current) {
       pendingSelectionRef.current = null;
       setCode(text);
@@ -344,47 +348,36 @@ export default function CodeEditor({ roomId, wsUrl }) {
     }
   }, []);
 
-  // Applies an edit made by another user
+  // Applies text written by another user: the file is replaced by their text
   const applyRemoteEdit = useCallback(
     (message) => {
       const file = filesRef.current.get(message.filePath);
-      // Unknown file, or we missed a revision: fetch a fresh copy instead
-      if (!file || message.revision !== file.revision + 1) {
+      // Unknown file: fetch it instead
+      if (!file) {
         sendWsMessage({ type: 'SELECT_FILE', filePath: message.filePath });
         return;
       }
+      if (typeof message.code !== 'string') return;
+      // We have a write the server has not acknowledged yet. The server handled
+      // this remote write first and ours after it, so ours is the winner and
+      // the remote text is already out of date. Ignore it (see the component comment).
+      if (file.pending > 0) return;
 
-      try {
-        // Rebase the remote operation over our outstanding op and buffered
-        // typing (and rebase those over it) so it fits what the user sees
-        let remote = message.op;
-        if (file.outstanding) {
-          [file.outstanding, remote] = transform(file.outstanding, remote);
-        }
-        if (file.buffer) {
-          [file.buffer, remote] = transform(file.buffer, remote);
-        }
+      const isActive = message.filePath === activePathRef.current;
+      const textarea = textareaRef.current;
+      // Keep the caret where it was, but never past the end of the new text
+      const selection =
+        isActive && textarea
+          ? {
+              start: Math.min(textarea.selectionStart, message.code.length),
+              end: Math.min(textarea.selectionEnd, message.code.length),
+            }
+          : null;
 
-        const isActive = message.filePath === activePathRef.current;
-        const textarea = textareaRef.current;
-        const selection =
-          isActive && textarea
-            ? {
-                start: transformIndex(remote, textarea.selectionStart),
-                end: transformIndex(remote, textarea.selectionEnd),
-              }
-            : null;
-
-        file.text = applyOp(file.text, remote);
-        file.revision = message.revision;
-        if (isActive) {
-          pendingSelectionRef.current = selection;
-          setCode(file.text);
-        }
-      } catch (error) {
-        // Our copy has drifted from the server's; ask for the server's copy
-        console.error('Could not apply remote edit, resyncing:', error);
-        sendWsMessage({ type: 'SELECT_FILE', filePath: message.filePath });
+      file.text = message.code;
+      if (isActive) {
+        pendingSelectionRef.current = selection;
+        setCode(file.text);
       }
     },
     [sendWsMessage]
@@ -429,23 +422,22 @@ export default function CodeEditor({ roomId, wsUrl }) {
       setTree(newTree);
 
       const carried = new Map();
+      const resend = [];
       for (const [id, oldPath] of oldPaths) {
         const file = filesRef.current.get(oldPath);
         const newPath = newPaths.get(id);
         if (!file || !newPath) continue;
 
-        // An edit still awaiting its ACK was sent to the old path, so the
-        // server never saw it; fold it back into what is waiting to be sent
-        if (file.outstanding) {
-          file.buffer = file.buffer
-            ? compose(file.outstanding, file.buffer)
-            : file.outstanding;
-          file.outstanding = null;
-        }
+        // Edits still awaiting their ACK were sent to the old path, where the
+        // server will not apply them (the file has moved). Forget them and,
+        // after the loop, send the current text again to the new path.
+        const hadPending = file.pending > 0;
+        file.pending = 0;
+        if (hadPending) resend.push(newPath);
         carried.set(newPath, file);
       }
       filesRef.current = carried;
-      for (const filePath of carried.keys()) flushFile(filePath);
+      for (const filePath of resend) flushFile(filePath);
 
       // Follow the open file if it moved; fall back to another if it is gone
       const activePath = activePathRef.current;
@@ -475,7 +467,7 @@ export default function CodeEditor({ roomId, wsUrl }) {
           // After a reconnect, anything typed that never reached the server is
           // replaced by the team's version; say so rather than lose it quietly
           const unsynced = [...filesRef.current.values()].filter(
-            (file) => file.outstanding || file.buffer
+            (file) => file.pending > 0
           ).length;
           if (unsynced > 0 && !switchedProblem) {
             setTerminalOutput(
@@ -486,7 +478,7 @@ export default function CodeEditor({ roomId, wsUrl }) {
           treeRef.current = message.tree;
           setTree(message.tree);
           for (const [filePath, text] of Object.entries(message.files || {})) {
-            resetFile(filePath, text, message.revisions?.[filePath] ?? 0);
+            resetFile(filePath, text);
           }
           // Open main.py, or whatever file is first if it was deleted
           if (!filesRef.current.has(activePathRef.current)) {
@@ -503,22 +495,19 @@ export default function CodeEditor({ roomId, wsUrl }) {
         // Authoritative copy of one file (response to SELECT_FILE, or sent
         // when the server couldn't reconcile our edit) - overwrites local text
         case 'FILE_SNAPSHOT':
-          resetFile(message.filePath, message.code, message.revision);
+          resetFile(message.filePath, message.code);
           break;
 
-        // Another user's edit, already rebased onto the server's history
+        // Another user's write: the file's new full text
         case 'TEXT_EDIT':
           applyRemoteEdit(message);
           break;
 
-        // The server accepted our outstanding edit: it is now part of the
-        // confirmed document, so send anything typed in the meantime
+        // The server applied one of our writes. When the count reaches zero
+        // the server holds exactly what we show, so remote text is accepted again
         case 'ACK': {
           const file = filesRef.current.get(message.filePath);
-          if (!file?.outstanding) break;
-          file.outstanding = null;
-          file.revision = message.revision;
-          flushFile(message.filePath);
+          if (file) file.pending = Math.max(0, file.pending - 1);
           break;
         }
 
@@ -551,8 +540,8 @@ export default function CodeEditor({ roomId, wsUrl }) {
           setEventStatus(message.status);
           break;
 
-        // A rejected edit would stay outstanding forever and block all further
-        // syncing of that file, so drop our copy and fetch the server's
+        // A rejected edit is never ACKed, so it would leave `pending` above zero
+        // and block remote text forever; drop our copy and fetch the server's
         case 'ERROR': {
           setTerminalOutput(`Editor error: ${message.error}`);
           setIsFileLoading(false);
@@ -560,7 +549,7 @@ export default function CodeEditor({ roomId, wsUrl }) {
           const file = message.filePath
             ? filesRef.current.get(message.filePath)
             : null;
-          if (file?.outstanding) {
+          if (file?.pending > 0) {
             filesRef.current.delete(message.filePath);
             if (message.filePath === activePathRef.current) {
               showFile(message.filePath);
@@ -576,7 +565,6 @@ export default function CodeEditor({ roomId, wsUrl }) {
     [
       applyRemoteEdit,
       applyTreeUpdate,
-      flushFile,
       resetFile,
       showFile,
       showSubmissionResult,
@@ -717,9 +705,6 @@ export default function CodeEditor({ roomId, wsUrl }) {
     if (!file) return;
 
     if (updatedCode === file.text) return;
-    // The change since the previous text, added to anything not yet sent
-    const op = diffToOp(file.text, updatedCode);
-    file.buffer = file.buffer ? compose(file.buffer, op) : op;
     file.text = updatedCode;
     setCode(updatedCode);
     flushFile(filePath);
@@ -758,6 +743,14 @@ export default function CodeEditor({ roomId, wsUrl }) {
     },
     [sendWsMessage]
   );
+
+  // The highlighted copy sits behind the textarea; keep it scrolled to match
+  const handleScroll = (event) => {
+    const highlight = highlightRef.current;
+    if (!highlight) return;
+    highlight.scrollTop = event.target.scrollTop;
+    highlight.scrollLeft = event.target.scrollLeft;
+  };
 
   // Python-friendly editing behaviour: Tab inserts 4 spaces, Backspace removes
   // a whole indent level, and Enter keeps (or adds/removes) indentation.
@@ -1067,18 +1060,31 @@ export default function CodeEditor({ roomId, wsUrl }) {
 
         <main className="editor-workspace">
           <div className="active-tab">{activeFilePath || 'No file open'}</div>
-          <textarea
-            ref={textareaRef}
-            value={code}
-            onChange={handleInput}
-            onKeyDown={handleKeyDown}
-            placeholder="Write Python code here..."
-            spellCheck={false}
-            className="code-input"
-            aria-label={`Python source code in ${activeFilePath}`}
-            disabled={!isReady || isFileLoading}
-            readOnly={!isEditable}
-          />
+          {/* Syntax highlighting: a coloured copy of the code is drawn in a
+              <pre> behind a textarea whose own text is transparent, so typing,
+              selection and the caret all still come from the real textarea */}
+          <div className="code-editor-area">
+            <pre
+              ref={highlightRef}
+              className="code-highlight"
+              aria-hidden="true"
+              dangerouslySetInnerHTML={{ __html: highlightPython(code) }}
+            />
+            <textarea
+              ref={textareaRef}
+              value={code}
+              onChange={handleInput}
+              onKeyDown={handleKeyDown}
+              onScroll={handleScroll}
+              placeholder="Write Python code here..."
+              spellCheck={false}
+              wrap="off"
+              className="code-input"
+              aria-label={`Python source code in ${activeFilePath}`}
+              disabled={!isReady || isFileLoading}
+              readOnly={!isEditable}
+            />
+          </div>
           <section className="terminal-panel" aria-label="Execution output">
             <div className="terminal-header">Python output</div>
             <pre className="terminal-content" role="status">

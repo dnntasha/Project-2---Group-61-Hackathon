@@ -10,7 +10,6 @@
  * (built-in fetch and WebSocket). The grading checks need Docker and
  * ENABLE_SUBMISSION_GRADING=true; without them they are reported as skipped.
  */
-import { diffToOp } from '../server/lib/textOp.js';
 
 const API = process.env.API ?? 'http://localhost:5000';
 const WS = API.replace(/^http/, 'ws');
@@ -232,8 +231,7 @@ check(
 early1.send({
   type: 'TEXT_EDIT',
   filePath: 'main.py',
-  op: diffToOp(preInit.files['main.py'] ?? '', 'x'),
-  baseRevision: 0,
+  code: 'x',
 });
 const refused = await early1.next((m) => m.type === 'ERROR', 5000);
 check(
@@ -326,11 +324,13 @@ b.send({
   type: 'TEXT_EDIT',
   problemId: p2Id,
   filePath: 'main.py',
-  op: diffToOp(switchB.files['main.py'], solution),
-  baseRevision: switchB.revisions['main.py'],
+  code: solution,
 });
 const relayed = await a.next((m) => m.type === 'TEXT_EDIT');
-check(relayed.filePath === 'main.py', 'edits are synced to the other member');
+check(
+  relayed.filePath === 'main.py' && relayed.code === solution,
+  'edits are synced to the other member (full text, last-write-wins)'
+);
 
 // Problem 1 kept its own code
 a.send({ type: 'SELECT_PROBLEM', problemId: p1Id });

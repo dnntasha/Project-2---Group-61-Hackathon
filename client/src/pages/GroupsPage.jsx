@@ -111,8 +111,12 @@ export default function GroupsPage({ onOpen }) {
                     <span className="member-badge">
                       {group.isAdmin ? 'Admin' : 'Member'}
                     </span>
-                    {group.startedAt && (
-                      <span className="group-card-meta">Started</span>
+                    {group.status === 'ended' ? (
+                      <span className="group-card-meta">Ended</span>
+                    ) : (
+                      group.startedAt && (
+                        <span className="group-card-meta">Started</span>
+                      )
                     )}
                   </button>
                 </li>

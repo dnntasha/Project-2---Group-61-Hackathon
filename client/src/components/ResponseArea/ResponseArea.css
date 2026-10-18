@@ -32,6 +32,7 @@
 }
 
 .submission-status,
+.test-status,
 .hidden-badge {
   display: inline-flex;
   align-items: center;
@@ -40,7 +41,8 @@
   font-weight: 700;
 }
 
-.submission-status {
+.submission-status,
+.test-status {
   padding: 6px 10px;
 }
 
@@ -56,11 +58,13 @@
   color: #b91c1c;
 }
 
-.submission-passed {
+.submission-passed,
+.test-passed .test-status {
   background: rgba(34, 197, 94, 0.12);
 }
 
-.submission-failed {
+.submission-failed,
+.test-failed .test-status {
   background: rgba(239, 68, 68, 0.12);
 }
 
@@ -124,11 +128,6 @@
   padding: 3px 7px;
   background: var(--accent-bg);
   color: var(--accent);
-}
-
-.test-status {
-  font-size: 13px;
-  font-weight: 700;
 }
 
 .test-runtime {

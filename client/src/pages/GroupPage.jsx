@@ -248,7 +248,6 @@ function TeamsPanel({ group }) {
         <>
           <PendingTeamInvites
             invites={teamData.pendingInvites}
-            locked={locked}
             onChanged={loadTeams}
           />
 
@@ -258,11 +257,17 @@ function TeamsPanel({ group }) {
             />
           )}
 
-          {!locked && !teamData.currentTeamId && (
+          {!locked && !teamData.currentTeamId && !group.isAdmin && (
             <CreateTeam group={group} onCreated={loadTeams} />
           )}
 
-          {locked && !teamData.currentTeamId && (
+          {group.isAdmin && (
+            <p className="form-hint teams-locked-message">
+              As the admin you run the event and do not take part in a team.
+            </p>
+          )}
+
+          {!group.isAdmin && locked && !teamData.currentTeamId && (
             <p className="form-hint teams-locked-message">
               Team creation is closed because the event has started.
             </p>
@@ -396,7 +401,7 @@ function CreateTeam({ group, onCreated }) {
   );
 }
 
-function PendingTeamInvites({ invites, locked, onChanged }) {
+function PendingTeamInvites({ invites, onChanged }) {
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState(null);
 
@@ -450,10 +455,10 @@ function PendingTeamInvites({ invites, locked, onChanged }) {
               <button
                 className="btn-primary btn-small"
                 type="button"
-                disabled={locked || busyId === invite.id}
+                disabled={busyId === invite.id}
                 onClick={() => handleInvite(invite.id, 'accept')}
               >
-                {locked ? 'Closed' : 'Accept'}
+                Accept
               </button>
             </div>
           </div>
@@ -487,6 +492,7 @@ function TeamCard({ team, group, locked, maxTeamSize, onChanged }) {
   // invited to it
   const eligibleMembers = (group.members || []).filter(
     (groupMember) =>
+      !groupMember.isAdmin &&
       !team.members.some((teamMember) => teamMember.id === groupMember.id) &&
       !team.invites.some((invite) => invite.userId === groupMember.id)
   );
