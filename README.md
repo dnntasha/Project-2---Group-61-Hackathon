@@ -45,6 +45,8 @@ If step 4 fails, start Docker Desktop or Rancher Desktop yourself and run `npm r
 4. Members create a **team** in the group and invite other members to it.
 5. Admin adds **problems** and test cases, adjusts the settings, then presses **Start event**.
 6. **Coding**: pick your team. Everyone in the team edits the same files live, and **Run Python** executes `main.py` in the sandbox.
+7. The team lead member presses **submit solution**. The code is graded against hidden and shown test cases; the report appears under the editor for the whole team and in the submission timeline.
+8. **Leaderboard**: every member of the group can see th eleaderboard of each problem and the final leaderboard.
 
 To test with two users on one machine, keep `npm run dev` running and open a second client in another terminal:
 
@@ -161,6 +163,20 @@ Everything works except running code.
 | Editor is read-only                                   | The code can only be changed while the event is running (after the admin starts it and before the duration is up).                                         |
 | Sign-in attempts are refused with "Too many"          | The sign-in limit allows 10 tries per username per 15 minutes. Wait, or set `DISABLE_RATE_LIMIT=true` for local testing.                                   |
 
+## Design decisions
+
+- **Shared editor conflicts.** Each edit sends the file's full text and the text it was made from. The server merges them line by line (`server/lib/textMerge.js`): edits by different people on different lines are all kept; when two people change the same lines, the later write wins for those lines. A teammate's change never moves your caret off the line you are typing on.
+- **New team leader.** When the leader leaves before the event starts, the member who has been on the team longest becomes leader. When the last member leaves, the team is deleted.
+- **Which submission counts.** A team's place on a problem leaderboard uses its best completed submission for that problem (highest P, then lowest T). Submissions that fail because of a server error are not counted and don't use up the submission limit.
+- **Output comparison.** Trailing whitespace at the end of lines and trailing blank lines are ignored; everything else must match exactly.
+- **Final leaderboard.** It is calculated live from the current submissions, so it can be viewed during the event and is final once the event ends.
+- **Runtime T.** Each test's runtime is measured by Docker from container start to exit, so it includes Python start-up. This is the same for every team, so rankings are fair.
+
+## Testing
+
+- `npm test` runs the unit tests. Sandbox tests run when Docker is available.
+- `node script/e2e-check.mjs` walks throguh a whole hackathonagainst a runnign branch (npm run dev first)
+
 ## Project layout
 
 ```
@@ -194,3 +210,4 @@ The scripts in `server/submission/test*.js` are manual checks that write to the 
 - Claude was used to audit the codebase after merging and to fix integration issues (team routes, editor rooms, WebSocket safety, Docker sandbox, submission checks, duplicate UI) and to rewrite this README's setup instructions
 - Generative AI was used to help address integration issues and bugfixes
 - Generative AI was used for assistance with styling
+- Claude was used for a dart of the final testing pass: an edge-case test suite (auth, groups, teams, problems, editor, grading, leaderboards) and a two-browser editor test. Fixes made from it: line-based merging of concurrent edits (`server/lib/textMerge.js`) with caret preservation (`client/src/components/CodeEditor/caret.js`), opening the team's problem when an editor room that was idle before the start is reopened, and rejecting file names with control characters. Claude also regenerated the database report and ER diagram (`docs/`) to match the current schema.

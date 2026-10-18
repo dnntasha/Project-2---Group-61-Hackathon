@@ -10,6 +10,5 @@ devNotes.md
 *.db-journal
 .vscode
 server/uploads/
-*.pdf
 server/prisma/shadow.db
 docs/
